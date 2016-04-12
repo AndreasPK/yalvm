@@ -1,0 +1,56 @@
+File Header
+1B 4C 75 61 51 00 01 04 04 04 08 00
+
+Function prototype:
+
+Function source file name
+10 00 00 00 40 48 65 6C 6C 6F 57 6F 72 6C 64 2E 6C 75 61 00
+
+Start/End line
+00 00 00 00 00 00 00 00
+
+1-Byte flags
+00 00 02 02
+
+Instruction List
+03 00 00 00    24 00 00 00   07 00 00 00    1E 00 80 00
+
+Constant List
+01 00 00 00
+04(String) 09 00 00 00 (Length) 73 61 79 48 65 6C 6C 6F 00
+
+Function List
+01 00 00 00 : List size
+
+First Function:
+  00 00 00 00 : Name (Empty)
+  01 00 00 00 03 00 00 00 : Start/End Line
+  00 00 00 02 : 1 Byte options (x4)
+  04 00 00 00 : Start of instruction List
+    05 00 00 00
+    41 40 00 00
+    1C 40 00 01
+    1E 00 80 00
+  02 00 00 00 : Start of const list
+  04 (String)
+    06 00 00 00 70 72 69 6E 74 00
+  04 (String)
+    0B 00 00 00 48 65 6C 6C 6F 57 6F 72 6C 64 00
+  00 00 00 00 : Function list (empty)
+
+  Debug information
+    04 00 00 00 : Source line position list
+      02 00 00 00
+      02 00 00 00
+      02 00 00 00
+      03 00 00 00
+    00 00 00 00 : Local List(size)
+    00 00 00 00 : Upvalue list (empty)
+
+Debug Information:
+03 00 00 00 : Source positions
+  03 00 00 00
+  03 00 00 00
+  03 00 00 00
+00 00 00 00 : Local list(empty)
+00 00 00 : Upvalues (empty)
