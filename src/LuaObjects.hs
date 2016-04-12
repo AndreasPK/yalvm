@@ -105,7 +105,7 @@ linstantiateFunction functionHeader@(LuaFunctionHeader name startLine endLine up
   let
   functionInstance =
     LuaFunctionInstance
-      (LuaMap $ Map.fromList $ zip [0..(fromIntegral stackSize)] (repeat LONil) )
+      (createStack $ fromIntegral stackSize )
       ( (\(LuaInstructionList l ins) -> ins) instructions)
       constList
       functionHeader
@@ -113,6 +113,7 @@ linstantiateFunction functionHeader@(LuaFunctionHeader name startLine endLine up
       (LuaRTUpvalueList IntMap.empty)
   in
   LOFunction functionInstance
+
 
 --Set the upvalues for a function instance
 lsetupvalues :: LuaObject -> LuaRTUpvalueList -> LuaObject
@@ -129,13 +130,18 @@ lsetvarargs (LOFunction (LuaFunctionInstance stack inst constList fh _ upvalues)
 
 lgetArgCount :: LuaObject -> Int
 lgetArgCount (LOFunction (LuaFunctionInstance _ _ _ fh _ _)) =
-  let (LuaFunctionHeader _ _ _ upvalCount parCount varargFlags stackSize _ _ _ _ _ _) = fh
+  let (LuaFunctionHeader _ _ _ upvalCount parCount varargFlags _ _ _ _ _ _ _) = fh
   in fromIntegral parCount
 
 lisVarArg :: LuaObject -> Bool
 lisVarArg (LOFunction (LuaFunctionInstance _ _ _ fh _ _)) =
-  let (LuaFunctionHeader _ _ _ upvalCount parCount varargFlags stackSize _ _ _ _ _ _) = fh
+  let (LuaFunctionHeader _ _ _ upvalCount parCount varargFlags _ _ _ _ _ _ _) = fh
   in varargFlags /= 0
+
+lgetMaxStackSize :: LuaObject -> Int
+lgetMaxStackSize (LOFunction (LuaFunctionInstance _ _ _ fh _ _)) =
+  let (LuaFunctionHeader _ _ _ upvalCount parCount varargFlags stackSize _ _ _ _ _ _) = fh
+  in fromIntegral stackSize
 
 
 ladd :: LuaObject -> LuaObject -> LuaObject
@@ -165,7 +171,10 @@ class LuaStack l where
   createStack :: Int -> l
   setElement :: l -> Int -> LuaObject -> l
   getElement :: l -> Int -> LuaObject
+  getRange :: l -> Int -> Int -> [LuaObject]--get elements stack[a..b]
   stackSize :: l -> Int
+  setStackSize :: l -> Int -> l
+  pushObjects :: l -> [LuaObject] -> l
 
 -- | Maps indexes to a lua object
 newtype LuaMap = LuaMap (Map.Map Int LuaObject) deriving (Eq, Show, Ord)
@@ -173,8 +182,15 @@ newtype LuaMap = LuaMap (Map.Map Int LuaObject) deriving (Eq, Show, Ord)
 instance LuaStack LuaMap where
   setElement (LuaMap stack) pos obj = LuaMap $ Map.insert pos obj stack
   getElement (LuaMap stack) pos = fromMaybe LONil $ Map.lookup pos stack
-  createStack size = LuaMap $ Map.fromList $ zip [0..size] $ repeat LONil
+  createStack size = LuaMap $ Map.fromAscList $ zip [0..size-1] $ repeat LONil
   stackSize (LuaMap stack) = Map.size stack
+  getRange stack lb rb = map (getElement stack :: Int -> LuaObject) [lb .. rb]
+  setStackSize (LuaMap stack) size
+    | Map.size stack == size = LuaMap stack
+    | Map.size stack > size  = LuaMap $ fst $ Map.split size stack
+    | Map.size stack < size = LuaMap $ Map.union stack $ Map.fromAscList $ zip [Map.size stack .. (size-1)] $ repeat LONil
+  pushObjects (LuaMap stack) objects = LuaMap $ Map.union stack $
+    Map.fromAscList $ zip [(Map.size stack)..] objects
 
 
 -- | the runtime value of a upvalue
