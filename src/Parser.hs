@@ -13,6 +13,7 @@ import qualified Data.Bits as Bits
 import Data.Binary.IEEE754
 import Debug.Trace
 
+
 luaHeaderDefinition :: ByteString
 luaHeaderDefinition = B8.pack "\x1b\x4c\x75\x61"
 

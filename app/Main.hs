@@ -29,7 +29,7 @@ main = do
   luaChunk <- Main.luaChunk
   let luaTopFunction = Parser.getTopFunction luaChunk :: Parser.LuaFunctionHeader
   state <- LVM.startExecution luaTopFunction :: IO LVM.LuaState
-  print state
+  --print state
 
   result <- LVM.runLuaFunction $ return state
 
@@ -39,6 +39,7 @@ main = do
   Prelude.putStrLn "\nFinal Stack:"
   LVM.printStack $ return result
 
-  print "lalala"
+  Prelude.putStrLn $ Prelude.replicate 10 '\n'
+  --print "lalala"
 
   -- BS8.putStrLn x

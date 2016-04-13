@@ -236,7 +236,6 @@ data LuaFunctionInstance =
       LuaFunctionHeader --Function prototypes
       LuaMap --ArgumentList for varargs, starting with index 0
       LuaRTUpvalueList --Upvalues missing
-  | LuaFunctionInstanceC Int
   deriving (Eq, Show, Ord)
 
 

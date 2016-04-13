@@ -44,6 +44,11 @@ updateStack (LuaState (LuaExecutionThread (LuaFunctionInstance stack instruction
   where
     newStack = updateFunction stack :: LuaMap
 
+getInstruction :: LuaState -> LuaInstruction
+getInstruction (LuaState (LuaExecutionThread (LuaFunctionInstance _ instructions _ _ _ _) _ pc _ _) _) =
+  instructions !! pc
+
+
 -- | Program counter manipulation
 setPC :: LuaState -> Int -> LuaState
 setPC (LuaState (LuaExecutionThread (LuaFunctionInstance stack instructions constList funcPrototype varargs upvalues) prevInst pc execState callInfo) globals) newipc =
@@ -163,8 +168,69 @@ execPureOP
     setPC state $ rsbx + getPC state
   | opCode == CLOSURE =
       execCLOSURE state ra rbx
-  | otherwise =
+  | opCode == VARARG =
+      updateStack state (\s -> updateVarArg s callInfo ra rb)
+  | opCode == SELF =
+      let index = decodeConst rc
+          table = getElement stack rb
+          callee = (\(LOTable t) -> getTableElement t index) table :: LuaObject
+          update = (\s -> setElement s ra callee) . (\s -> setElement s (ra+1) table) :: (LuaStack s) => s -> s
+      in
+      updateStack state update
+  | opCode == LuaLoader.EQ =
+      let a = decodeConst rb
+          b = decodeConst rc
+          comparison = a == b
+          result     = not $ compBtoI comparison ra
+      in  if result then incPC state
+          else state
+  | opCode == LuaLoader.LT =
+      let a = decodeConst rb
+          b = decodeConst rc
+          comparison = a < b
+          result     = not $ compBtoI comparison ra
+      in  if result then incPC state
+          else state
+  | opCode == LuaLoader.LE =
+      let a = decodeConst rb
+          b = decodeConst rc
+          comparison = a <= b
+          result     = not $ compBtoI comparison ra
+      in  if result then incPC state
+          else state
+  | opCode == TEST =
+      let (LOBool a) = ltoBool $ getElement stack ra :: LuaObject
+          match = compBtoI a rc
+      in
+      if not match then incPC state
+        else state
+  | opCode == TESTSET =
+    let (LOBool b) = ltoBool $ getElement stack rb :: LuaObject
+        match = compBtoI b rc
+    in
+    if match then updateStack state (\stack -> setElement stack ra $ getElement stack rb)
+      else incPC state
+  | opCode == FORPREP =
+      error "Undefined"
+  | opCode == FORLOOP =
+      error "Undefined"
+  | opCode == TFORLOOP =
+      error "Undefined"
+  | opCode == NEWTABLE =
+      updateStack state (\stack -> setElement stack ra $ LOTable createTable)
+  | opCode == SETLIST =
+      -- used to set an array of elements at once
+      let table = getElement stack ra
+          elementCount = if rb > 0 then rb else stackSize stack - (ra + 1)
+          elements = getRange stack (ra+1) (ra+elementCount) :: [LuaObject]
+          index = if rc /= 0 then (rc - 1) * 50 + 1 else error "large indices not supported"
+          newPairs = zip (map (LONumber . fromIntegral) [index ..]) elements
+          newTable = foldl (\(LOTable t) (k, v) -> LOTable $ setTableElement t k v) table newPairs
+      in
+      updateStack state (\s -> setElement s ra newTable)
+  | opCode `elem` [CALL, TAILCALL, RETURN] =
       state
+  | otherwise = error "Unknown OP-Code"
   where
      LuaFunctionInstance stack instructions constList funcPrototype varargs upvalues = functionInst
      LuaMap stackMap = stack
@@ -175,10 +241,20 @@ execPureOP
      rc = LuaLoader.rc nextInstruction
      rbx = LuaLoader.rbx nextInstruction
      rsbx = LuaLoader.rsbx nextInstruction
+
      decodeConst :: Int -> LuaObject
      decodeConst register = if (register Bits..&. 256) == 256 then
        getConst constList (register - 256) else
          getElement stack register
+
+compBtoI :: Bool -> Int -> Bool
+compBtoI b i = b && i > 0 || not b && i == 0
+
+--copies values from vararg list to the stack, might update top of stack
+updateVarArg :: (LuaStack a) => a -> LuaCallInfo -> Int -> Int -> a
+updateVarArg stack (LuaCallInfo varargs) offset countIndicator
+  | countIndicator == 0 = foldl (\s (k, v) -> setElement s k v) stack $ zip [offset .. ] varargs
+  | countIndicator > 1 = foldl (\s (k, v) -> setElement s k v) stack $ zip [offset .. (offset + countIndicator - 2)] varargs
 
 execCLOSURE :: LuaState -> Int -> Int -> LuaState
 execCLOSURE state@(LuaState executionThread globals) ra rbx =
@@ -193,19 +269,22 @@ execCLOSURE state@(LuaState executionThread globals) ra rbx =
 runLuaFunction :: IO LuaState -> IO LuaState
 runLuaFunction state = do
   state <- state
+  putStrLn ""
+  print $ ppLuaInstruction $ getInstruction state
   state <- return $ execPureOP state --execute simple op codes
   let (LuaState executionThread@(LuaExecutionThread functionInst _prev_func pc execState callInfo) globals) = state
   let (LuaFunctionInstance stack instructions constList funcPrototype _varargs upvalues) = functionInst
   let nextInstruction = instructions !! pc
 --  let calledFunction = getElement stack (LVM.ra nextInstruction) :: LuaObject
   let opCode = LuaLoader.op nextInstruction
-  putStrLn ""
-  print $ ppLuaInstruction nextInstruction
-  printStack $ return state
+
+
+  --printStack $ return state
   case opCode of
     --We increment the callers pc, then we change the context with runCall before tail-calling back to runLuaFunction
     CALL -> runLuaFunction $ runCall $ return $ incPC state
     RETURN -> returnCall $ return state
+    TAILCALL -> runLuaFunction $ tailCall $ return state
     otherwise -> runLuaFunction $ return $ incPC state --Execute next instruction in this function
 
 -- |  We enter the function with the ip being at the instruction after the call
@@ -278,7 +357,9 @@ returnCall state = do
   state <- state
   let oldState@(LuaState executionThread@(LuaExecutionThread functionInst prevExecInst pc execState callInfo) globals) = state
   let (LuaFunctionInstance stack instructions constList funcPrototype varargs upvalues) = functionInst
-  let returnInstruction = instructions !! pc
+  let returnInstruction = getInstruction state :: LuaInstruction
+
+
 
   --collect results
   let results = collectValues (LVM.ra returnInstruction) (LVM.rb returnInstruction) stack:: [LuaObject]
@@ -308,6 +389,31 @@ returnByOrigin state exec results = do
   --putStrLn ""
   --printStack $ return newState
   return newState
+
+-- | Tail call implementation, rewind stack and pc then return!
+-- pc points to the tailcall function
+tailCall :: IO LuaState -> IO LuaState
+tailCall state = do
+  oldState@(LuaState executionThread@(LuaExecutionThread functionInst prevExecInst pc execState callInfo) globals) <- state
+  let tailcallInstruction = getInstruction oldState
+  let stack = lGetStateStack oldState
+  let calleePosition = LVM.ra tailcallInstruction
+  let lof@(LOFunction calledFunction) = getElement stack calleePosition :: LuaObject
+  let newStackSize = lgetMaxStackSize lof :: Int
+
+  --collect parameters
+  let maxArgCount = lgetArgCount lof :: Int
+  let passedArguments = collectValues (calleePosition+1) (LVM.rb tailcallInstruction) stack :: [LuaObject]
+  let (fixedArgs, varArgs) = splitAt maxArgCount passedArguments
+
+  --newStackCreation
+  let newStack = flip setStackSize newStackSize $ flip pushObjects fixedArgs $ createStack 0 :: LuaMap
+  print (newStack, fixedArgs, newStackSize)
+
+  --replace the current execution context with one execution the called Function and the given parameters
+  let newState = LuaState (LuaExecutionThread calledFunction prevExecInst 0 LuaStateRunning (LuaCallInfo varArgs)) globals
+  return $ updateStack newState $ const newStack
+  --TODO: Close upvalues
 
 
 
