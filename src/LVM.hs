@@ -33,6 +33,13 @@ lGetStateStack :: LuaState -> LuaMap
 lGetStateStack (LuaState executionThread@(LuaExecutionThread (LuaFunctionInstance stack instructions constList funcPrototype varargs upvalues) prevExecInst pc execState callInfoEmpty) globals) =
   stack
 
+lGetLastFrame :: LuaState -> LuaExecutionThread
+lGetLastFrame (LuaState executionThread@(LuaExecutionThread _ prevExecInst pc execState callInfoEmpty) globals) = prevExecInst
+
+lGetRunningState :: LuaState -> LuaExecutionState
+lGetRunningState (LuaState (LuaExecutionThread _ _ pc execState callInfoEmpty) globals) = execState
+lGetRunningState _ = LuaStateSuspended
+
 stackChange :: LuaFunctionInstance -> LuaMap -> LuaFunctionInstance
 stackChange (LuaFunctionInstance _ instructions constList funcPrototype varargs upvalues) stack =
   LuaFunctionInstance stack instructions constList funcPrototype varargs upvalues
@@ -135,6 +142,7 @@ execPureOP
     let x = ltoNumber $ decodeConst rb
         y = ltoNumber $ decodeConst rc
     in
+    traceShow (x,y,ra,stack)
     updateStack state (\s -> setElement s ra $ lmul x y)
   | opCode == DIV =
     let x = ltoNumber $ decodeConst rb
@@ -269,36 +277,42 @@ execCLOSURE state@(LuaState executionThread globals) ra rbx =
 runLuaFunction :: IO LuaState -> IO LuaState
 runLuaFunction state = do
   state <- state
-  putStrLn ""
-  print $ ppLuaInstruction $ getInstruction state
-  state <- return $ execPureOP state --execute simple op codes
-  let (LuaState executionThread@(LuaExecutionThread functionInst _prev_func pc execState callInfo) globals) = state
-  let (LuaFunctionInstance stack instructions constList funcPrototype _varargs upvalues) = functionInst
-  let nextInstruction = instructions !! pc
---  let calledFunction = getElement stack (LVM.ra nextInstruction) :: LuaObject
-  let opCode = LuaLoader.op nextInstruction
+  if lGetRunningState state /= LuaStateRunning then return state else do
+    putStrLn ""
+    Monad.when True {-(|| LuaLoader.op (getInstruction state) `elem` [RETURN, CALL, TAILCALL])-} $ do
+      print $ ppLuaInstruction $ getInstruction state
+      return ()
+      --printStack $ return state
+    --stackWalk state
+    state <- return $ execPureOP state --execute simple op codes
+    let (LuaState executionThread@(LuaExecutionThread functionInst _prev_func pc execState callInfo) globals) = state
+    let (LuaFunctionInstance stack instructions constList funcPrototype _varargs upvalues) = functionInst
+    let nextInstruction = getInstruction state
+    let opCode = LuaLoader.op nextInstruction
+
+    --printStack $ return state
+    case opCode of
+      --We increment the callers pc, then we change the context with runCall before tail-calling back to runLuaFunction
+      CALL -> runLuaFunction $ runCall $ return $ incPC state
+      RETURN -> runLuaFunction $ returnCall $ return state
+      TAILCALL -> runLuaFunction $ tailCall $ return state
+      otherwise -> runLuaFunction $ return $ incPC state --Execute next instruction in this function
 
 
-  --printStack $ return state
-  case opCode of
-    --We increment the callers pc, then we change the context with runCall before tail-calling back to runLuaFunction
-    CALL -> runLuaFunction $ runCall $ return $ incPC state
-    RETURN -> returnCall $ return state
-    TAILCALL -> runLuaFunction $ tailCall $ return state
-    otherwise -> runLuaFunction $ return $ incPC state --Execute next instruction in this function
+
 
 -- |  We enter the function with the ip being at the instruction after the call
---    and the execution frame still being that of the caller.
---
---  When calling a function we perform the following operations:
---    Collecting parameters of the target function:
---    a) Collect fixed parameters, pass these onto the stack of the callee
---    b) Collect variable parameters for vararg calls and put them into callInfo
---
---    c) Stack cleanup: We remove all collected parameters from the callers Stack as well as the function object
---
---    d) Jumping back into runLuaFunction with the called function being active
---
+  --    and the execution frame still being that of the caller.
+  --
+  --  When calling a function we perform the following operations:
+  --    Collecting parameters of the target function:
+  --    a) Collect fixed parameters, pass these onto the stack of the callee
+  --    b) Collect variable parameters for vararg calls and put them into callInfo
+  --
+  --    c) Stack cleanup: We remove all collected parameters from the callers Stack as well as the function object
+  --
+  --    d) Jumping back into runLuaFunction with the called function being active
+  --
 runCall :: IO LuaState -> IO LuaState
 runCall state = do
   state <- state
@@ -314,15 +328,11 @@ runCall state = do
   let maxArgCount = lgetArgCount calledFunction :: Int
   let passedArguments = collectValues (calleePosition +1) (LVM.rb callInst) stack :: [LuaObject]
 
-  --print $ "we are passing these arguments:" ++ show passedArguments
+  print $ "we are passing these arguments:" ++ show passedArguments
 
   --clearing caller stack
   let argCount = length passedArguments :: Int
   let nos@(LuaState oldExecutionThread _) = updateStack state (\s -> setStackSize s $ stackSize s - (max argCount maxArgCount + 1)) --shrink stack by parameter count +1 for the passed function
-
-  --putStrLn "\nNew old stack:"
-  --traceIO $ "Argument counts and shit" ++ show (argCount, maxArgCount, passedArguments)
-  --printStack $ return nos
 
   --split arguments in fixed args and varargs
   let (fixedArguments, varArgs) = splitAt maxArgCount passedArguments :: ([LuaObject], [LuaObject])
@@ -354,40 +364,42 @@ returnCall :: IO LuaState -> IO LuaState
 returnCall state = do
   --printStack state
   --print "before return"
-  state <- state
-  let oldState@(LuaState executionThread@(LuaExecutionThread functionInst prevExecInst pc execState callInfo) globals) = state
-  let (LuaFunctionInstance stack instructions constList funcPrototype varargs upvalues) = functionInst
-  let returnInstruction = getInstruction state :: LuaInstruction
-
-
+  --state <- state
+  --let oldState@(LuaState executionThread@(LuaExecutionThread functionInst prevExecInst pc execState callInfo) globals) = state
+  --let (LuaFunctionInstance stack instructions constList funcPrototype varargs upvalues) = functionInst
+  returnInstruction <- fmap getInstruction state :: IO LuaInstruction
 
   --collect results
-  let results = collectValues (LVM.ra returnInstruction) (LVM.rb returnInstruction) stack:: [LuaObject]
+  stack <- fmap lGetStateStack state
+  let results = collectValues (LVM.ra returnInstruction) (LVM.rb returnInstruction) stack :: [LuaObject]
+  putStrLn $ "Results:" ++ show results
 
+  prevExecInst <- fmap lGetLastFrame state
   {-
   putStrLn $ "\nResults for " ++ ppLuaInstruction returnInstruction ++ " are:"
   mapM_ print results
   putStrLn ""-}
 
   --b - c are handled by this function
-  returnByOrigin state prevExecInst results
+  s <- state
+  returnByOrigin s prevExecInst results
 
 
 returnByOrigin :: LuaState -> LuaExecutionThread -> [LuaObject] -> IO LuaState
 --When returning to Haskell we only pass back the list of results
-returnByOrigin state (LuaExecInstanceTop _) results = do
-  --putStrLn "Returning to Haskell"
+returnByOrigin state (LuaExecInstanceTop undefined) results = do
+  putStrLn "Returning to Haskell"
   let (LuaState _ globals) = state
   return $ LuaState (LuaExecInstanceTop results) globals
+
 --Returning back to a caller lua function
 returnByOrigin state exec results = do
-  --print exec
-  --putStrLn "Returning to Lua Caller"
+  putStrLn "Returning to Lua Caller"
+
   let (LuaState (LuaExecutionThread _ prevExecInst _ _ callInfo) globals) = state
+  print $ lGetStateStack state
   let newState = updateStack (LuaState prevExecInst globals) $ flip pushObjects results
-  --printStack $ return state
-  --putStrLn ""
-  --printStack $ return newState
+  print $ lGetStateStack newState
   return newState
 
 -- | Tail call implementation, rewind stack and pc then return!
@@ -435,3 +447,16 @@ printStack state = do
     ps state = do
       let (LuaState (LuaExecutionThread (LuaFunctionInstance stack _ _ _ _ _) prevInst pc execState callInfo) globals) = state
       Monad.foldM (\_ n -> print $ getElement stack n) () [0..stackSize stack - 1]
+
+stackWalk :: LVM.LuaState -> IO ()
+stackWalk state = do
+  ps state
+  return ()
+  where
+    ps (LVM.LuaState (LuaObjects.LuaExecInstanceTop res) _) =
+      mapM_ print res
+    ps state = do
+      let (LVM.LuaState (LuaExecutionThread (LuaFunctionInstance stack _ _ _ _ _) prevInst pc execState callInfo) globals) = state
+      Monad.foldM (\_ n -> print $ getElement stack n) () [0..stackSize stack - 1]
+      print "1-UP"
+      ps $ LVM.LuaState prevInst undefined

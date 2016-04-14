@@ -12,6 +12,7 @@ import           Data.ByteString.Char8      as B8
 import           Data.Word
 import qualified LVM
 import qualified Parser
+import           LuaObjects
 import qualified Control.Monad              as Monad
 
 file :: IO ByteString
@@ -29,12 +30,11 @@ main = do
   luaChunk <- Main.luaChunk
   let luaTopFunction = Parser.getTopFunction luaChunk :: Parser.LuaFunctionHeader
   state <- LVM.startExecution luaTopFunction :: IO LVM.LuaState
-  --print state
-
+  
   result <- LVM.runLuaFunction $ return state
 
-  Prelude.putStrLn "\nVM State:"
-  print result
+  --Prelude.putStrLn "\nVM State:"
+  --print result
 
   Prelude.putStrLn "\nFinal Stack:"
   LVM.printStack $ return result
@@ -43,3 +43,16 @@ main = do
   --print "lalala"
 
   -- BS8.putStrLn x
+
+stackWalk :: LVM.LuaState -> IO ()
+stackWalk state = do
+  ps state
+  return ()
+  where
+    ps (LVM.LuaState (LuaObjects.LuaExecInstanceTop res) _) =
+      mapM_ print res
+    ps state = do
+      let (LVM.LuaState (LuaExecutionThread (LuaFunctionInstance stack _ _ _ _ _) prevInst pc execState callInfo) globals) = state
+      Monad.foldM (\_ n -> print $ getElement stack n) () [0..stackSize stack - 1]
+      print "1-UP"
+      ps $ LVM.LuaState prevInst undefined

@@ -23,6 +23,7 @@ class CLuaInstruction i where
   rc :: i -> Int
   rbx :: i -> Int
   rsbx :: i -> Int
+  create :: (LuaOPCode, Int, Int, Int) -> i
 
 instance CLuaInstruction Word32 where
   op w = toEnum $ fromIntegral $ w .&. (2^6-1 :: Word32)
@@ -31,6 +32,11 @@ instance CLuaInstruction Word32 where
   rb w = fromIntegral $ shiftR w 23 .&. (2^9-1 :: Word32)
   rbx w = fromIntegral $ shiftR w 14 .&. (2^18-1 :: Word32)
   rsbx w = rbx w - 131071
+  create (op, ra, rb, rc) = fromIntegral $
+    fromEnum op +
+    shiftL ra 6 +
+    shiftL rc 14 +
+    shiftL rb 23
 
 getFunctionInstructions :: LuaFunctionHeader -> [LuaInstruction]
 getFunctionInstructions (LuaFunctionHeader _ _ _ _ _ _ _ (LuaInstructionList _ instructions) _ _ _ _ _) = instructions

@@ -1,4 +1,4 @@
-module LuaObjects where
+module LuaObjects(module LuaObjects) where
 
 import qualified Data.Map.Strict as Map
 import qualified Data.IntMap.Strict as IntMap
@@ -175,6 +175,8 @@ class LuaStack l where
   stackSize :: l -> Int
   setStackSize :: l -> Int -> l
   pushObjects :: l -> [LuaObject] -> l
+  fromList :: [LuaObject] -> l
+  fromList = pushObjects (createStack 0)
 
 -- | Maps indexes to a lua object
 newtype LuaMap = LuaMap (Map.Map Int LuaObject) deriving (Eq, Show, Ord)

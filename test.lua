@@ -1,11 +1,10 @@
-function fac(x)
-  if x > 1 then
-    return x*fac(x-1)
-  else
+function f(x)
+  if x == 1 then
     return 1
+  else
+    return x * f(x-1)
   end
 end
 
-return fac(2)
---print( fac(5))
---return 6, f(2)
+local z = f(5)
+print (z)
