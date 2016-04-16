@@ -5,6 +5,7 @@ import LuaObjects
 import qualified Data.Map.Strict as Map
 import Control.Monad.ST
 import Data.Either
+import Data.Maybe
 import Data.STRef
 import Data.Array.IArray as Array
 import qualified Data.Bits as Bits
@@ -39,6 +40,18 @@ lGetLastFrame (LuaState executionThread@(LuaExecutionThread _ prevExecInst pc ex
 lGetRunningState :: LuaState -> LuaExecutionState
 lGetRunningState (LuaState (LuaExecutionThread _ _ pc execState callInfoEmpty) globals) = execState
 lGetRunningState _ = LuaStateSuspended
+
+lIsHaskellFunction :: LuaState -> Bool
+lIsHaskellFunction (LuaState (LuaExecutionThread HaskellFunctionInstance {} _ _ _ _) globals) = True
+lIsHaskellFunction _ = False
+
+lSetExecutionState :: LuaState -> LuaExecutionState -> LuaState
+lSetExecutionState (LuaState (LuaExecutionThread a b pc execState callInfoEmpty) globals) state =
+   LuaState (LuaExecutionThread a b pc state callInfoEmpty) globals
+
+lGetGlobals :: LuaState -> Map.Map String LuaObject
+lGetGlobals (LuaState _ globals) = globals
+
 
 stackChange :: LuaFunctionInstance -> LuaMap -> LuaFunctionInstance
 stackChange (LuaFunctionInstance _ instructions constList funcPrototype varargs upvalues) stack =
@@ -100,7 +113,7 @@ execPureOP
         offset
   | opCode == GETGLOBAL = -- R(A) := Glb(Kst(rbx))
       let LOString s = getConst constList rbx :: LuaObject
-          Just value = Map.lookup s globals
+          value = fromMaybe (error $ "Global doesn't exist!!!" ++ show s ++ show globals) $ Map.lookup s globals
       in
       updateStack state (\stack -> setElement stack ra value)
   | opCode == SETGLOBAL =
@@ -142,7 +155,6 @@ execPureOP
     let x = ltoNumber $ decodeConst rb
         y = ltoNumber $ decodeConst rc
     in
-    traceShow (x,y,ra,stack)
     updateStack state (\s -> setElement s ra $ lmul x y)
   | opCode == DIV =
     let x = ltoNumber $ decodeConst rb
@@ -278,12 +290,12 @@ runLuaFunction :: IO LuaState -> IO LuaState
 runLuaFunction state = do
   state <- state
   if lGetRunningState state /= LuaStateRunning then return state else do
-    putStrLn ""
+    {-putStrLn ""
     Monad.when True {-(|| LuaLoader.op (getInstruction state) `elem` [RETURN, CALL, TAILCALL])-} $ do
       print $ ppLuaInstruction $ getInstruction state
       return ()
       --printStack $ return state
-    --stackWalk state
+    --stackWalk state-}
     state <- return $ execPureOP state --execute simple op codes
     let (LuaState executionThread@(LuaExecutionThread functionInst _prev_func pc execState callInfo) globals) = state
     let (LuaFunctionInstance stack instructions constList funcPrototype _varargs upvalues) = functionInst
@@ -293,12 +305,30 @@ runLuaFunction state = do
     --printStack $ return state
     case opCode of
       --We increment the callers pc, then we change the context with runCall before tail-calling back to runLuaFunction
-      CALL -> runLuaFunction $ runCall $ return $ incPC state
+      CALL -> runLuaFunction $ runCall $ return state
       RETURN -> runLuaFunction $ returnCall $ return state
       TAILCALL -> runLuaFunction $ tailCall $ return state
       otherwise -> runLuaFunction $ return $ incPC state --Execute next instruction in this function
 
 
+
+getCallee :: LuaState -> LuaObject
+getCallee state =
+  let inst = getInstruction state
+      ra = LVM.ra inst
+      stack = lGetStateStack state
+      callee = getElement stack ra
+  in callee
+
+isLuaCall :: LuaState -> Bool
+isLuaCall state =
+  let (LOFunction x) = getCallee state
+  in
+  ft x
+    where
+      ft :: LuaFunctionInstance -> Bool
+      ft LuaFunctionInstance {} = True
+      ft HaskellFunctionInstance {} = False
 
 
 -- |  We enter the function with the ip being at the instruction after the call
@@ -315,32 +345,68 @@ runLuaFunction state = do
   --
 runCall :: IO LuaState -> IO LuaState
 runCall state = do
+  s <- state
+  if isLuaCall s then runLuaCall state else runHaskellCall state
+
+-- | returns the called function and its parameters
+getCallArguments :: LuaState -> (LuaObject, [LuaObject])
+getCallArguments state =
+  let callInst = getInstruction state -- Call instruction
+      calleePosition = LVM.ra callInst
+      stack = lGetStateStack state
+      parameters = collectValues (calleePosition +1) (LVM.rb callInst) stack
+      callee = getCallee state
+  in
+  (callee, parameters)
+
+runHaskellCall :: IO LuaState -> IO LuaState
+runHaskellCall state = do
+  --printStack  state
+  state <- state
+  let (callee, parameters) = getCallArguments state
+  let LOFunction (HaskellFunctionInstance name _s func) = callee
+
+  --Call haskell function with arguments
+  results <- func $ fromList <$> return parameters
+
+  let ss = updateStack state $ flip shrink (stackSize results)
+
+  return $ incPC $ updateStack ss $ flip pushObjects (toList results)
+
+  --adjust caller stack
+
+
+
+runLuaCall :: IO LuaState -> IO LuaState
+runLuaCall state = do
   state <- state
   let (LuaState executionThread@(LuaExecutionThread functionInst prevInst pc execState callInfo) globals) = state
   let (LuaFunctionInstance stack instructions constList funcPrototype varargs upvalues) = functionInst
-  let callInst = instructions !! (pc-1) -- Call instruction
-  let calleePosition = LVM.ra callInst
-  let calledFunction = getElement stack calleePosition :: LuaObject
-  let calleeInstance = (\(LOFunction f) -> f) calledFunction :: LuaFunctionInstance
-  let calleeHeader = lgetFunctionHeader calledFunction :: Parser.LuaFunctionHeader
 
+  let (calledFunction, parameters) = getCallArguments state
+
+  let calleeInstance = (\(LOFunction f) -> f) calledFunction :: LuaFunctionInstance
+
+  let calleeHeader = lgetFunctionHeader calledFunction :: Parser.LuaFunctionHeader
   --collect arguments
   let maxArgCount = lgetArgCount calledFunction :: Int
-  let passedArguments = collectValues (calleePosition +1) (LVM.rb callInst) stack :: [LuaObject]
 
-  print $ "we are passing these arguments:" ++ show passedArguments
+  print $ "we are passing these arguments:" ++ show parameters
 
   --clearing caller stack
-  let argCount = length passedArguments :: Int
+  let argCount = length parameters :: Int
   let nos@(LuaState oldExecutionThread _) = updateStack state (\s -> setStackSize s $ stackSize s - (max argCount maxArgCount + 1)) --shrink stack by parameter count +1 for the passed function
 
   --split arguments in fixed args and varargs
-  let (fixedArguments, varArgs) = splitAt maxArgCount passedArguments :: ([LuaObject], [LuaObject])
+  let (fixedArguments, varArgs) = splitAt maxArgCount parameters :: ([LuaObject], [LuaObject])
 
   let calleeStack = flip setStackSize maxArgCount $ pushObjects (createStack 0) fixedArguments
+  let newExecutionThread = LuaExecutionThread calleeInstance oldExecutionThread 0 LuaStateRunning (LuaCallInfo varArgs)
+
   ---call resulting function
-  return $ updateStack (flip LuaState globals $ LuaExecutionThread calleeInstance oldExecutionThread 0 LuaStateRunning (LuaCallInfo varArgs))
-                       (const calleeStack)
+  return $ flip updateStack (const calleeStack) $ LuaState newExecutionThread $ lGetGlobals state
+
+
 
 -- Collects the number of parameters given by rb in the call instruction
 -- offset gives the position of the first parameter, rb the expected parameter count
@@ -349,7 +415,7 @@ collectValues offset rbCount stack
   | rbCount == 1 = []
   | rbCount > 1 = getRange stack offset (offset + rbCount -2)
   | rbCount == 0 = getRange stack offset (stackSize stack - 1)
-  | otherwise = undefined
+  | otherwise = error "Invalid parameter count"
 
 
 -- | When returning from a function we need to:
@@ -375,10 +441,6 @@ returnCall state = do
   putStrLn $ "Results:" ++ show results
 
   prevExecInst <- fmap lGetLastFrame state
-  {-
-  putStrLn $ "\nResults for " ++ ppLuaInstruction returnInstruction ++ " are:"
-  mapM_ print results
-  putStrLn ""-}
 
   --b - c are handled by this function
   s <- state
@@ -400,17 +462,21 @@ returnByOrigin state exec results = do
   print $ lGetStateStack state
   let newState = updateStack (LuaState prevExecInst globals) $ flip pushObjects results
   print $ lGetStateStack newState
-  return newState
+  return $ incPC newState
 
 -- | Tail call implementation, rewind stack and pc then return!
 -- pc points to the tailcall function
 tailCall :: IO LuaState -> IO LuaState
 tailCall state = do
+  --{+--(callee@(LOFunction calledFunction), parameters) <- fmap getCallArguments state+}
+
   oldState@(LuaState executionThread@(LuaExecutionThread functionInst prevExecInst pc execState callInfo) globals) <- state
+  state <- state
   let tailcallInstruction = getInstruction oldState
   let stack = lGetStateStack oldState
   let calleePosition = LVM.ra tailcallInstruction
-  let lof@(LOFunction calledFunction) = getElement stack calleePosition :: LuaObject
+  --{+callee <- fmap getCallee state+}
+  let lof@(LOFunction calledFunction) = getCallee state --getElement+} stack calleePosition :: LuaObject
   let newStackSize = lgetMaxStackSize lof :: Int
 
   --collect parameters
@@ -418,15 +484,11 @@ tailCall state = do
   let passedArguments = collectValues (calleePosition+1) (LVM.rb tailcallInstruction) stack :: [LuaObject]
   let (fixedArgs, varArgs) = splitAt maxArgCount passedArguments
 
-  --newStackCreation
-  let newStack = flip setStackSize newStackSize $ flip pushObjects fixedArgs $ createStack 0 :: LuaMap
-  print (newStack, fixedArgs, newStackSize)
+  let newStack = flip setStackSize newStackSize $ flip pushObjects fixedArgs $ createStack 0
 
-  --replace the current execution context with one execution the called Function and the given parameters
   let newState = LuaState (LuaExecutionThread calledFunction prevExecInst 0 LuaStateRunning (LuaCallInfo varArgs)) globals
-  return $ updateStack newState $ const newStack
-  --TODO: Close upvalues
 
+  return $ updateStack newState $ const newStack
 
 
 concatOP :: (LuaStack a) => a -> Int -> Int -> LuaObject

@@ -1,10 +1,11 @@
 function f(x)
-  if x == 1 then
+  if x < 1 then
     return 1
   else
-    return x * f(x-1)
+    return 1 + f(x-1)
   end
 end
 
-local z = f(5)
-print (z)
+local z = f(10)
+print("...................")
+return f(10)

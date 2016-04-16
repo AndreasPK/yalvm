@@ -14,6 +14,7 @@ import qualified LVM
 import qualified Parser
 import           LuaObjects
 import qualified Control.Monad              as Monad
+import qualified LRT
 
 file :: IO ByteString
 file = BS.readFile "luac.out"
@@ -30,14 +31,16 @@ main = do
   luaChunk <- Main.luaChunk
   let luaTopFunction = Parser.getTopFunction luaChunk :: Parser.LuaFunctionHeader
   state <- LVM.startExecution luaTopFunction :: IO LVM.LuaState
-  
+
+  state <- return $ LRT.setGlobal state "print" $ LOFunction LRT.lrtPrint
+
   result <- LVM.runLuaFunction $ return state
 
   --Prelude.putStrLn "\nVM State:"
   --print result
 
-  Prelude.putStrLn "\nFinal Stack:"
-  LVM.printStack $ return result
+  --Prelude.putStrLn "\nFinal Stack:"
+  --LVM.printStack $ return result
 
   Prelude.putStrLn $ Prelude.replicate 10 '\n'
   --print "lalala"

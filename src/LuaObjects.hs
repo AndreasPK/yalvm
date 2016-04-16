@@ -84,7 +84,7 @@ ltoString LONil = LOString "nil"
 ltoString (LOBool True) = LOString "true"
 ltoString (LOBool False) = LOString "false"
 ltoString (LONumber x) = LOString $ show x
-ltoString x@(LOString s) = x :: LuaObject
+ltoString x@(LOString s) = x
 ltostring x = LOString $ show x
 
 lgetFunctionHeader :: LuaObject -> LuaFunctionHeader
@@ -177,6 +177,10 @@ class LuaStack l where
   pushObjects :: l -> [LuaObject] -> l
   fromList :: [LuaObject] -> l
   fromList = pushObjects (createStack 0)
+  shrink :: l -> Int -> l --shrink stack by x elements if possible
+  shrink s x = setStackSize s $ stackSize s - x
+  toList :: l -> [LuaObject]
+  toList l = map (getElement l) [0..stackSize l -1]
 
 -- | Maps indexes to a lua object
 newtype LuaMap = LuaMap (Map.Map Int LuaObject) deriving (Eq, Show, Ord)
@@ -193,7 +197,6 @@ instance LuaStack LuaMap where
     | Map.size stack < size = LuaMap $ Map.union stack $ Map.fromAscList $ zip [Map.size stack .. (size-1)] $ repeat LONil
   pushObjects (LuaMap stack) objects = LuaMap $ Map.union stack $
     Map.fromAscList $ zip [(Map.size stack)..] objects
-
 
 -- | the runtime value of a upvalue
 data LuaRuntimUpvalue =
@@ -238,7 +241,23 @@ data LuaFunctionInstance =
       LuaFunctionHeader --Function prototypes
       LuaMap --ArgumentList for varargs, starting with index 0
       LuaRTUpvalueList --Upvalues missing
-  deriving (Eq, Show, Ord)
+  |
+  HaskellFunctionInstance
+    String --name
+    LuaMap --Stack
+    (IO LuaMap -> IO LuaMap)
+  deriving ()
+
+instance Eq LuaFunctionInstance where
+   (==) a b = error "Broken typeclass for function instances"
+
+instance Ord LuaFunctionInstance where
+  (<=) a b = error "Broken typeclass for function instances"
+
+instance Show LuaFunctionInstance where
+  show (HaskellFunctionInstance name _ _) = "(HaskellFunction: " ++ name ++ ")"
+  show (LuaFunctionInstance stack _ constList fh varargs upvalues) = "(Lua Function: " ++ show (stack, constList, fh, varargs, upvalues) ++ ")"
+
 
 
 
