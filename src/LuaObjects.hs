@@ -172,6 +172,7 @@ class LuaStack l where
   setElement :: l -> Int -> LuaObject -> l
   getElement :: l -> Int -> LuaObject
   getRange :: l -> Int -> Int -> [LuaObject]--get elements stack[a..b]
+  setRange :: l -> Int -> [LuaObject] -> l
   stackSize :: l -> Int
   setStackSize :: l -> Int -> l
   pushObjects :: l -> [LuaObject] -> l
@@ -181,6 +182,7 @@ class LuaStack l where
   shrink s x = setStackSize s $ stackSize s - x
   toList :: l -> [LuaObject]
   toList l = map (getElement l) [0..stackSize l -1]
+  setRange stack n objects = foldl (\s (k, v) -> setElement s k v) stack $ zip [n..] objects --requires stack to be at least (n - 1) in size
 
 -- | Maps indexes to a lua object
 newtype LuaMap = LuaMap (Map.Map Int LuaObject) deriving (Eq, Show, Ord)

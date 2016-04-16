@@ -6,6 +6,10 @@ function f(x)
   end
 end
 
-local z = f(10)
-print("...................")
-return f(10)
+function ff(x) return f(x) end
+
+--local z = ff(10)
+--local y = f(5)
+--local z = z + 1
+--print("...................")
+return ff(10)
