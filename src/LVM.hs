@@ -3,7 +3,7 @@ module LVM where
 import LuaLoader
 import LuaObjects
 import qualified Data.Map.Strict as Map
-import Control.Monad.ST
+import Control.Monad.ST as ST
 import Data.Either
 import Data.Maybe
 import Data.STRef
@@ -24,7 +24,7 @@ data LuaState = LuaState
   deriving (Eq, Show, Ord)
 
 --Take the function header of a top level function and create a vm state based on that
-startExecution :: Parser.LuaFunctionHeader -> IO LuaState
+startExecution :: Parser.LuaFunctionHeader -> ST s LuaState
 startExecution header =
   let function@(LOFunction funcInstance) = linstantiateFunction header :: LuaObject
   in
@@ -288,7 +288,7 @@ execCLOSURE state@(LuaState executionThread globals) ra rbx =
   flip setPC (pc + fromIntegral upvalueCount) $ updateStack state (\stack -> setElement stack ra func)
 
 --Continue stepping the VM until we reach a return statement
-runLuaFunction :: IO LuaState -> IO LuaState
+runLuaFunction :: ST s LuaState -> ST s LuaState
 runLuaFunction state = do
   state <- state
   if lGetRunningState state /= LuaStateRunning then return state else do
@@ -311,8 +311,6 @@ runLuaFunction state = do
       RETURN -> runLuaFunction $ returnCall $ return state
       TAILCALL -> runLuaFunction $ tailCall $ return state
       otherwise -> runLuaFunction $ return $ incPC state --Execute next instruction in this function
-
-
 
 getCallee :: LuaState -> LuaObject
 getCallee state =
@@ -345,7 +343,7 @@ isLuaCall state =
   --
   --    d) Jumping back into runLuaFunction with the called function being active
   --
-runCall :: IO LuaState -> IO LuaState
+runCall :: ST s LuaState -> ST s LuaState
 runCall state = do
   s <- state
   if isLuaCall s then runLuaCall state else runHaskellCall state
@@ -363,26 +361,18 @@ getCallArguments state =
   in
   (callee, parameters)
 
-runHaskellCall :: IO LuaState -> IO LuaState
+runHaskellCall :: ST s LuaState -> ST s LuaState
 runHaskellCall state = do
-  state <- state
-  let (callee, parameters) = getCallArguments state
+  (callee, parameters) <- fmap getCallArguments state
   let LOFunction (HaskellFunctionInstance name _s func) = callee
 
   --Call haskell function with arguments
-  results <- func $ fromList <$> return parameters
-
-  returnByOrigin state (lGetLastFrame state) $ toList results
-
-  -- let ss = updateStack state $ flip shrink (stackSize results)
-  --
-  -- return $ incPC $ updateStack ss $ flip pushObjects (toList results)
-
-  --adjust caller stack
+  results <- fmap func $ fromList <$> return parameters
+  unliftedState <- state
+  returnByOrigin state (lGetLastFrame unliftedState) (toList results)
 
 
-
-runLuaCall :: IO LuaState -> IO LuaState
+runLuaCall :: ST s LuaState -> ST s LuaState
 runLuaCall state = do
   state <- state
   let (LuaState executionThread@(LuaExecutionThread functionInst prevInst pc execState callInfo) globals) = state
@@ -429,14 +419,9 @@ c) Reset the execution context back to the one of the caller
 d) TODO: CLose upvalues
 -}
 
-returnCall :: IO LuaState -> IO LuaState
+returnCall :: ST s LuaState -> ST s LuaState
 returnCall state = do
-  --printStack state
-  --print "before return"
-  --state <- state
-  --let oldState@(LuaState executionThread@(LuaExecutionThread functionInst prevExecInst pc execState callInfo) globals) = state
-  --let (LuaFunctionInstance stack instructions constList funcPrototype varargs upvalues) = functionInst
-  returnInstruction <- fmap getInstruction state :: IO LuaInstruction
+  returnInstruction <- fmap getInstruction state
 
   --collect results
   stack <- fmap lGetStateStack state
@@ -447,20 +432,21 @@ returnCall state = do
 
   --b - c are handled by this function
   s <- state
-  returnByOrigin s prevExecInst results
+  returnByOrigin state prevExecInst results
 
 
-returnByOrigin :: LuaState -> LuaExecutionThread -> [LuaObject] -> IO LuaState
+returnByOrigin :: ST s LuaState -> LuaExecutionThread -> [LuaObject] -> ST s LuaState
 --When returning to Haskell we only pass back the list of results
 returnByOrigin state (LuaExecInstanceTop undefined) results = do
-  putStrLn "Returning to Haskell"
-  return $ LuaState (LuaExecInstanceTop results) $ lGetGlobals state
+  --putStrLn "Returning to Haskell"
+  globals <- Monad.liftM lGetGlobals state
+  return $ LuaState (LuaExecInstanceTop results) globals
 
 --Returning back to a caller lua function
 returnByOrigin state exec results = do
   --putStrLn "Returning to Lua Caller"
 
-  let (LuaState (LuaExecutionThread _ prevExecInst _ _ callInfo) globals) = state
+  (LuaState (LuaExecutionThread _ prevExecInst _ _ callInfo) globals) <- state
   --Number of results to return based on the previous call code, 0 variable, 1 = none, > 1 = n - 1
   let resultCount = LVM.rc $ getInstruction $ LuaState prevExecInst undefined :: Int
   let returnedResults = if resultCount == 0 then results else take (resultCount - 1) results
@@ -470,7 +456,7 @@ returnByOrigin state exec results = do
 
 -- pc points to the tailcall function
 -- replace current execution Thread by one execution the callee
-tailCall :: IO LuaState -> IO LuaState
+tailCall :: ST s LuaState -> ST s LuaState
 tailCall state = do
   (callee@(LOFunction calledFunction), parameters) <- fmap getCallArguments state
   luaCall <- fmap isLuaCall state
@@ -506,9 +492,9 @@ concatOP stack from to
   where LOString start = ltoString $ getElement stack from :: LuaObject
         LOString next = concatOP stack (from+1) to
 
-printStack :: IO LuaState -> IO ()
+printStack :: LuaState -> IO ()
 printStack state = do
-  s <- state
+  let s = state
   ps s
   where
     ps (LuaState (LuaExecInstanceTop res) _) =
