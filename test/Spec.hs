@@ -8,11 +8,18 @@ import qualified LVM
 import qualified Parser
 import qualified Data.ByteString as BS
 import qualified Data.Attoparsec.ByteString as PBS
+import Control.Monad.ST
 
 
 main :: IO ()
 main = do
-  fmap print (testFile "test/testFiles/luac.out" [LONil])
+  r <- testFile "test/testFiles/testReturn.luac" [LOString "123\0"]
+  print r
+  r <- testFile "test/testFiles/nestedCall.luac" [LOString "123\0"]
+
+  print r
+  print . show <$> testFile "test/testFiles/callHaskell.luac" [LOString "123\0"]
+
   --putStrLn "Test suite not yet implemented"
   --runTestTT operatorTests
   return ()
@@ -44,8 +51,9 @@ runLuaCode :: FilePath -> IO LuaState
 runLuaCode path = do
   fileContent <- BS.readFile path :: IO BS.ByteString
   let chunk = either (error "Failed to parse binary file") id $ LuaLoader.loadLua fileContent -- :: IO (Either String Parser.LuaBinaryFile)
-  vm <- LVM.startExecution $ Parser.getTopFunction chunk :: IO LuaState
-  LVM.runLuaFunction $ return vm
+  vm <- stToIO $ LVM.startExecution $ Parser.getTopFunction chunk :: IO LuaState
+  let vm = LRT.registerAll vm
+  stToIO $ LVM.runLuaFunction $ return vm
 
 compareLO :: LuaObject -> LuaObject -> (Bool, LuaObject, LuaObject)
 compareLO a b =

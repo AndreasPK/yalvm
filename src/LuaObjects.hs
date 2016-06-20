@@ -247,7 +247,7 @@ data LuaFunctionInstance =
   HaskellFunctionInstance
     String --name
     LuaMap --Stack
-    (LuaMap -> LuaMap)
+    (IO LuaMap -> IO LuaMap)
   deriving ()
 
 instance Eq LuaFunctionInstance where

@@ -4,6 +4,7 @@ import LuaLoader
 import LuaObjects
 import qualified Data.Map.Strict as Map
 import Control.Monad.ST as ST
+import Control.Monad.ST.Unsafe
 import Data.Either
 import Data.Maybe
 import Data.STRef
@@ -33,6 +34,7 @@ startExecution header =
 lGetStateStack :: LuaState -> LuaMap
 lGetStateStack (LuaState executionThread@(LuaExecutionThread (LuaFunctionInstance stack instructions constList funcPrototype varargs upvalues) prevExecInst pc execState callInfoEmpty) globals) =
   stack
+lGetStateStack (LuaState (LuaExecInstanceTop results) _ ) = fromList results
 
 lGetLastFrame :: LuaState -> LuaExecutionThread
 lGetLastFrame (LuaState executionThread@(LuaExecutionThread _ prevExecInst pc execState callInfoEmpty) globals) = prevExecInst
@@ -366,8 +368,10 @@ runHaskellCall state = do
   (callee, parameters) <- fmap getCallArguments state
   let LOFunction (HaskellFunctionInstance name _s func) = callee
 
-  --Call haskell function with arguments
-  results <- fmap func $ fromList <$> return parameters
+
+  --Call haskell function with arguments, transform results back to State
+  results <- unsafeIOToST $ func $ return (fromList parameters :: LuaMap)
+
   unliftedState <- state
   returnByOrigin state (lGetLastFrame unliftedState) (toList results)
 
