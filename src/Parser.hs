@@ -210,7 +210,7 @@ luaUpvalueList :: PBS.Parser LuaUpvalueList
 luaUpvalueList =
   do
     size <- anyWord32le
-    let s = traceShow size $ fromIntegral size
+    let s = fromIntegral size
     upvalues <- PBS.count s luaString
     return $ LuaUpvalueList s $ fmap LuaUpvalue upvalues
   PBS.<?> "luaUpvalueList"

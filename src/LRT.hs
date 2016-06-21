@@ -10,9 +10,11 @@ import Control.Monad.ST as ST
 --add global values, names are to be given without trailing zero
 setGlobal :: LuaState -> String -> LuaObject -> LuaState
 setGlobal (LuaState exec globals) key value =
-  LuaState exec $ Map.insert (key++"\NUL") value globals
+  let name = key ++ "\NUL"
+  in
+  LuaState exec $ Map.insert name value globals
 
---
+
 registerFunction :: LuaState -> (IO LuaMap -> IO LuaMap) -> String -> LuaState
 registerFunction state f name = setGlobal state name $ LOFunction $ HaskellFunctionInstance name (createStack 0) f
 

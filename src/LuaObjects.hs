@@ -237,16 +237,16 @@ type LuaParameterList = [LuaObject]
 -- LuaFunctionInstance stack instructions constants funcPrototypes upvalues arguments
 data LuaFunctionInstance =
   LuaFunctionInstance
-      LuaMap -- Stack
-      [LuaInstruction] --List of op codes
-      LuaConstList --List of constants
-      LuaFunctionHeader --Function prototypes
-      LuaMap --ArgumentList for varargs, starting with index 0
-      LuaRTUpvalueList --Upvalues missing
+      !LuaMap -- Stack
+      ![LuaInstruction] --List of op codes
+      !LuaConstList --List of constants
+      !LuaFunctionHeader --Function prototypes
+      !LuaMap --ArgumentList for varargs, starting with index 0
+      !LuaRTUpvalueList --Upvalues missing
   |
   HaskellFunctionInstance
-    String --name
-    LuaMap --Stack
+    !String --name
+    !LuaMap --Stack
     (IO LuaMap -> IO LuaMap)
   deriving ()
 
@@ -270,11 +270,11 @@ data LuaExecutionState = LuaStateSuspended | LuaStateRunning | LuaStateDead deri
 -- LuaExecutionThread func precThread pc state callInfo
 data LuaExecutionThread =
   LuaExecutionThread
-    LuaFunctionInstance
-    LuaExecutionThread
-    Int
-    LuaExecutionState
-    LuaCallInfo
+    !LuaFunctionInstance
+    !LuaExecutionThread
+    !Int
+    !LuaExecutionState
+    !LuaCallInfo
   |
   LuaExecInstanceTop [LuaObject]
   deriving (Eq, Show, Ord)

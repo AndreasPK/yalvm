@@ -38,6 +38,7 @@ executable yalvm-exe
                      , bytestring
                      , containers
                      , attoparsec
+                     , HUnit
   default-language:    Haskell2010
 
 test-suite yalvm-test

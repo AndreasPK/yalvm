@@ -12,7 +12,7 @@ import Data.Array.IArray as Array
 import qualified Data.Bits as Bits
 import System.IO
 import Data.IORef
-import Debug.Trace
+import Debug.Trace as Trace
 import qualified Parser
 import qualified Control.Monad as Monad
 
@@ -20,8 +20,8 @@ type LuaGlobals = Map.Map String LuaObject
 
 -- | Fully describes the state of the virtual machine
 data LuaState = LuaState
-  LuaExecutionThread        --current execution Thread
-  (Map.Map String LuaObject) --Global list
+  !LuaExecutionThread        --current execution Thread
+  !(Map.Map String LuaObject) --Global list
   deriving (Eq, Show, Ord)
 
 --Take the function header of a top level function and create a vm state based on that
@@ -293,7 +293,9 @@ execCLOSURE state@(LuaState executionThread globals) ra rbx =
 runLuaFunction :: ST s LuaState -> ST s LuaState
 runLuaFunction state = do
   state <- state
+  --unsafeIOToST $ traceIO "GetState"
   if lGetRunningState state /= LuaStateRunning then return state else do
+    --traceM "Handle op code"
     {-putStrLn ""
     Monad.when True {-(|| LuaLoader.op (getInstruction state) `elem` [RETURN, CALL, TAILCALL])-} $ do
       print $ ppLuaInstruction $ getInstruction state
@@ -303,10 +305,13 @@ runLuaFunction state = do
     state <- return $ execPureOP state --execute simple op codes
     let (LuaState executionThread@(LuaExecutionThread functionInst _prev_func pc execState callInfo) globals) = state
     let (LuaFunctionInstance stack instructions constList funcPrototype _varargs upvalues) = functionInst
-    let nextInstruction = getInstruction state
+    let nextInstruction = getInstruction state :: LuaInstruction
     let opCode = LuaLoader.op nextInstruction
 
+    unsafeIOToST $ putStrLn $ ppLuaInstruction nextInstruction
+
     --printStack $ return state
+    --traceM "Handle op code"
     case opCode of
       --We increment the callers pc, then we change the context with runCall before tail-calling back to runLuaFunction
       CALL -> runLuaFunction $ runCall $ return state
@@ -388,11 +393,13 @@ runLuaCall state = do
   --collect arguments
   let maxArgCount = lgetArgCount calledFunction :: Int
 
-  --print $ "we are passing these arguments:" ++ show parameters
+  --unsafeIOToST $ print $ "we are passing these arguments:" ++ show parameters
 
   --clearing caller stack
   let argCount = length parameters :: Int
-  let nos@(LuaState oldExecutionThread _) = updateStack state (\s -> setStackSize s $ stackSize s - (max argCount maxArgCount + 1)) --shrink stack by parameter count +1 for the passed function
+
+  --shrink stack by parameter count +1 for the passed function
+  let nos@(LuaState oldExecutionThread _) = updateStack state (\s -> setStackSize s $ stackSize s - (max argCount maxArgCount + 1))
 
   --split arguments in fixed args and varargs
   let (fixedArguments, varArgs) = splitAt maxArgCount parameters :: ([LuaObject], [LuaObject])
@@ -442,13 +449,13 @@ returnCall state = do
 returnByOrigin :: ST s LuaState -> LuaExecutionThread -> [LuaObject] -> ST s LuaState
 --When returning to Haskell we only pass back the list of results
 returnByOrigin state (LuaExecInstanceTop undefined) results = do
-  --putStrLn "Returning to Haskell"
+  Trace.traceM "Returning to Haskell"
   globals <- Monad.liftM lGetGlobals state
   return $ LuaState (LuaExecInstanceTop results) globals
 
 --Returning back to a caller lua function
 returnByOrigin state exec results = do
-  --putStrLn "Returning to Lua Caller"
+  Trace.traceM "Returning to Lua Caller"
 
   (LuaState (LuaExecutionThread _ prevExecInst _ _ callInfo) globals) <- state
   --Number of results to return based on the previous call code, 0 variable, 1 = none, > 1 = n - 1
@@ -498,6 +505,7 @@ concatOP stack from to
 
 printStack :: LuaState -> IO ()
 printStack state = do
+  print "Stack:"
   let s = state
   ps s
   where
@@ -509,6 +517,7 @@ printStack state = do
 
 stackWalk :: LVM.LuaState -> IO ()
 stackWalk state = do
+  print "Stackwalk"
   ps state
   return ()
   where
