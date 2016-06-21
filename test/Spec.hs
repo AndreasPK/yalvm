@@ -21,7 +21,7 @@ main = do
   r <- testFile "test/testFiles/nestedCall.luac" [LOString "123\0"]
 
   print r
-  -- print . show <$> testFile "test/testFiles/callHaskell.luac" [LOString "123\0"]
+  print . show <$> testFile "test/testFiles/callHaskell.luac" [LOString "123\0"]
 
   --putStrLn "Test suite not yet implemented"
   --runTestTT operatorTests

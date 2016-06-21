@@ -237,17 +237,19 @@ type LuaParameterList = [LuaObject]
 -- LuaFunctionInstance stack instructions constants funcPrototypes upvalues arguments
 data LuaFunctionInstance =
   LuaFunctionInstance
-      !LuaMap -- Stack
-      ![LuaInstruction] --List of op codes
-      !LuaConstList --List of constants
-      !LuaFunctionHeader --Function prototypes
-      !LuaMap --ArgumentList for varargs, starting with index 0
-      !LuaRTUpvalueList --Upvalues missing
+  { funcStack :: !LuaMap -- Stack
+  , funcInstructions :: ![LuaInstruction] --List of op codes
+  , funcConstants :: !LuaConstList --List of constants
+  , funcHeader :: !LuaFunctionHeader --Function prototypes
+  , funcVarargs :: !LuaMap --ArgumentList for varargs, starting with index 0
+  , funcUpvalues :: !LuaRTUpvalueList --Upvalues missing
+  }
   |
   HaskellFunctionInstance
-    !String --name
-    !LuaMap --Stack
-    (IO LuaMap -> IO LuaMap)
+  { funcName :: !String --name
+  , funcStack :: !LuaMap --Stack
+  , funcFunc ::  IO LuaMap -> IO LuaMap
+  }
   deriving ()
 
 instance Eq LuaFunctionInstance where
@@ -269,12 +271,12 @@ data LuaExecutionState = LuaStateSuspended | LuaStateRunning | LuaStateDead deri
 -- Wraps a function AND execution frame, so jumping into another function also means replacing the current executin thread as well
 -- LuaExecutionThread func precThread pc state callInfo
 data LuaExecutionThread =
-  LuaExecutionThread
-    !LuaFunctionInstance
-    !LuaExecutionThread
-    !Int
-    !LuaExecutionState
-    !LuaCallInfo
+  LuaExecutionThread {
+    execFunctionInstance :: !LuaFunctionInstance,
+    execPrevInst :: !LuaExecutionThread,
+    execCurrentPC :: !Int,
+    execRunningState :: !LuaExecutionState,
+    execCallInfo :: !LuaCallInfo }
   |
   LuaExecInstanceTop [LuaObject]
   deriving (Eq, Show, Ord)
