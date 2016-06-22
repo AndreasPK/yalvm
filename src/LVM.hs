@@ -74,6 +74,13 @@ getInstruction :: LuaState -> LuaInstruction
 getInstruction (LuaState (LuaExecutionThread (LuaFunctionInstance _ instructions _ _ _ _) _ pc _ _) _) =
   instructions !! pc
 
+--get the instruction at pc + offset
+getRelativeInstruction :: LuaState -> Int -> LuaInstruction
+getRelativeInstruction state offset =
+  let func = execFunctionInstance . stateExecutionThread $ state
+  in
+  (funcInstructions func !! (getPC state + offset))
+
 
 -- | Program counter manipulation
 setPC :: LuaState -> Int -> LuaState
@@ -283,14 +290,18 @@ updateVarArg stack (LuaCallInfo varargs) offset countIndicator
   | countIndicator == 0 = foldl (\s (k, v) -> setElement s k v) stack $ zip [offset .. ] varargs
   | countIndicator > 1 = foldl (\s (k, v) -> setElement s k v) stack $ zip [offset .. (offset + countIndicator - 2)] varargs
 
+--create a new closure
 execCLOSURE :: LuaState -> Int -> Int -> LuaState
 execCLOSURE state@(LuaState executionThread globals) ra rbx =
   let funcPrototype@(Parser.LuaFunctionHeader _ _ _ upvalueCount paramCount varargFlag stackSize instList constList _ _ _ _) = getContainedFunctionHeader executionThread rbx :: Parser.LuaFunctionHeader
-      func = linstantiateFunction funcPrototype :: LuaObject
+      LOFunction func = linstantiateFunction funcPrototype :: LuaObject
       pc = getPC state
+      upvalueInstructions = fmap (getRelativeInstruction state) [1 .. fromIntegral upvalueCount] :: [LuaInstruction]
+      func1 = func { funcUpvalues = LuaRTUpvalueList undefined}
+
       --TODO: create upvalues
   in
-  flip setPC (pc + fromIntegral upvalueCount) $ updateStack state (\stack -> setElement stack ra func)
+  flip setPC (pc + fromIntegral upvalueCount) $ updateStack state (\stack -> setElement stack ra (LOFunction func1))
 
 --Continue stepping the VM until we reach a return statement
 runLuaFunction :: ST s LuaState -> ST s LuaState

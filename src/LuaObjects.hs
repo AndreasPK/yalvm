@@ -204,7 +204,8 @@ instance LuaStack LuaMap where
 data LuaRuntimUpvalue =
   LRTUpvalueReference LuaMap Int | --Reference a stack and a index
   LRTUpvalueValue LuaObject | --Reference a object directly
-  LRTUpvalueUpvalue LuaRTUpvalueList Int --References the upvalue of another function
+  LRTUpvalueUpvalue LuaRTUpvalueList Int | --References the upvalue of another function
+  LRTOpenUpvalue Int Bool --position type(Stackvalue=True/Upvalue)
   deriving (Eq, Show, Ord)
 
 -- | List of upvalues used in this function

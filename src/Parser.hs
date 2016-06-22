@@ -76,19 +76,20 @@ decodeLuaVersion w =
   in (fromIntegral major, fromIntegral minor)
 
 data LuaFunctionHeader = LuaFunctionHeader
-  LuaString -- name
-  Word32 --line defined
-  Word32 --line end
-  Word8 --upvalueCount
-  Word8 --parameterCount
-  Word8 --varargFlag
-  Word8 --maxStackSize
-  LuaInstructionList
-  LuaConstList
-  LuaFunctionList
-  LuaInstructionPositionList
-  LuaLocalList
-  LuaUpvalueList
+  {  fhName :: LuaString -- name
+  ,  fhStart :: Word32 --line defined
+  ,  fhEnd :: Word32 --line end
+  ,  fhUpvalueCount ::Word8 --upvalueCount
+  ,  fhParameterCount :: Word8 --parameterCount
+  ,  fhVarargFlag :: Word8 --varargFlag
+  ,  fhMaxStacksize :: Word8 --maxStackSize
+  ,  fhInstructions :: LuaInstructionList
+  ,  fhConstants :: LuaConstList
+  ,  fhFunctions :: LuaFunctionList
+  ,  fhInstPos :: LuaInstructionPositionList
+  ,  fhLocalNames :: LuaLocalList
+  ,  fhUpvalueNames :: LuaUpvalueList
+  }
   deriving (Eq, Show, Ord)
 
 -- | Read a function header from a lua chunk, assumes 4 byte ints, opcodes and sizeOf fields as well as little endian

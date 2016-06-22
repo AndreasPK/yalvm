@@ -23,6 +23,8 @@ main = do
   print r
   print . show <$> testFile "test/testFiles/callHaskell.luac" [LOString "123\0"]
 
+  print . show <$> testFile "test/testFiles/upvalues.luac" [LONumber 3]
+
   --putStrLn "Test suite not yet implemented"
   --runTestTT operatorTests
   return ()
