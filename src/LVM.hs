@@ -16,6 +16,7 @@ import Debug.Trace as Trace
 import qualified Parser
 import qualified Control.Monad as Monad
 import Control.Exception.Base
+import Data.Function
 
 type LuaGlobals = Map.Map String LuaObject
 
@@ -108,155 +109,188 @@ rsbx = LuaLoader.rsbx
 
 -- |Applies the changes from executing a OP code to the lua state
 --  Only executes "pure" changes
-execPureOP :: LuaState -> LuaState
-execPureOP
-  state@(LuaState executionThread@(LuaExecutionThread functionInst prevInst pc execState callInfo) globals)
-  | opCode == MOVE = -- RA = RB
-      updateStack state (\stack ->setElement stack ra $ getElement stack rb)
-  | opCode == LOADNIL =
-      updateStack state (\(LuaMap m) -> LuaMap $ foldl (\m k -> Map.insert k LONil m) stackMap [ra..rb])
-  | opCode == LOADK =
-      updateStack state (\stack -> setElement stack ra $ getConst constList rbx)
-  | opCode == LOADBOOL =
+execOP :: ST s LuaState -> ST s LuaState
+execOP state = do
+  instruction <- getInstruction <$> state
+  let opCode = LuaLoader.op instruction
+  --unsafeIOToST $ putStrLn $ ppLuaInstruction instruction
+
+  state@(LuaState executionThread@(LuaExecutionThread functionInst prevInst pc execState callInfo) globals) <- state
+  let  LuaFunctionInstance stack instructions constList funcPrototype varargs upvalues = functionInst
+       LuaMap stackMap = stack
+       nextInstruction = instructions !! pc
+       opCode = LuaLoader.op nextInstruction :: LuaOPCode
+       ra = LuaLoader.ra nextInstruction :: Int
+       rb = LuaLoader.rb nextInstruction
+       rc = LuaLoader.rc nextInstruction
+       rbx = LuaLoader.rbx nextInstruction
+       rsbx = LuaLoader.rsbx nextInstruction
+
+       --For K enccoding bit 9 deternines if we use a constant or a stack value
+       decodeConst :: Int -> LuaObject
+       decodeConst register = if (register Bits..&. 256) == 256 then
+         getConst constList (register - 256) else
+           getElement stack register
+
+  case opCode of
+    MOVE -> -- RA = RB
+      return $ updateStack state (\stack ->setElement stack ra $ getElement stack rb)
+    LOADNIL ->
+      return $ updateStack state (\(LuaMap m) -> LuaMap $ foldl (\m k -> Map.insert k LONil m) stackMap [ra..rb])
+    LOADK ->
+      return $ updateStack state (\stack -> setElement stack ra $ getConst constList rbx)
+    LOADBOOL ->
       let bv = if rb == 0 then LOBool False else LOBool True :: LuaObject
           offset = if rc == 0 then 0 else 1 :: Int
       in
-      setPC
+      return $ setPC
         (updateStack state (\stack -> setElement stack ra bv))
         offset
-  | opCode == GETGLOBAL = -- R(A) := Glb(Kst(rbx))
+    GETGLOBAL -> -- R(A) := Glb(Kst(rbx))
       let LOString s = getConst constList rbx :: LuaObject
           value = fromMaybe (error $ "Global doesn't exist!!!" ++ show s ++ show globals) $ Map.lookup s globals
       in
-      updateStack state (\stack -> setElement stack ra value)
-  | opCode == SETGLOBAL =
+      return $ updateStack state (\stack -> setElement stack ra value)
+    SETGLOBAL ->
       let LOString s = getConst constList rbx :: LuaObject
           value = getElement stack ra
       in
-      LuaState executionThread $ Map.insert s value globals
-  | opCode == GETUPVAL =
+      return $ LuaState executionThread $ Map.insert s value globals
+    GETUPVAL ->
       let value = getUpvalue upvalues rb :: LuaObject
       in
-      updateStack state (\s -> setElement s ra value)
-  | opCode == SETUPVAL =
+      return $ updateStack state (\s -> setElement s ra value)
+    SETUPVAL ->
       let value = getElement stack ra
           newUpvalues = setUpvalue upvalues rb value
       in
-      LuaState (LuaExecutionThread (LuaFunctionInstance stack instructions constList funcPrototype varargs newUpvalues) prevInst pc execState callInfo) globals
-  | opCode == GETTABLE =
-    let LOTable table = getElement stack rb :: LuaObject
-        value = getTableElement table $ decodeConst rc
-    in
-    updateStack state (\s -> setElement s ra value)
-  | opCode == SETTABLE =
-    let value = getElement stack rc
-        LOTable table = getElement stack ra
-        newTable = LOTable $ setTableElement table (decodeConst rb) value
-    in
-    updateStack state (\s -> setElement s ra newTable)
-  | opCode == ADD =
-    let x = ltoNumber $ decodeConst rb
-        y = ltoNumber $ decodeConst rc
-    in
-    updateStack state (\s -> setElement s ra $ ladd x y)
-  | opCode == SUB =
-    let x = ltoNumber $ decodeConst rb
-        y = ltoNumber $ decodeConst rc
-    in
-    updateStack state (\s -> setElement s ra $ lsub x y)
-  | opCode == MUL =
-    let x = ltoNumber $ decodeConst rb
-        y = ltoNumber $ decodeConst rc
-    in
-    updateStack state (\s -> setElement s ra $ lmul x y)
-  | opCode == DIV =
-    let x = ltoNumber $ decodeConst rb
-        y = ltoNumber $ decodeConst rc
-    in
-    updateStack state (\s -> setElement s ra $ ldiv x y)
-  | opCode == MOD =
-    let x = ltoNumber $ decodeConst rb
-        y = ltoNumber $ decodeConst rc
-    in
-    updateStack state (\s -> setElement s ra $ lmod x y)
-  | opCode == POW =
-    let x = ltoNumber $ decodeConst rb
-        y = ltoNumber $ decodeConst rc
-    in
-    updateStack state (\s -> setElement s ra $ lpow x y)
-  | opCode == UNM =
-    let LONumber x = ltoNumber $ getElement stack rb
-    in
-    updateStack state (\s -> setElement stack ra (LONumber (-x)))
-  | opCode == NOT =
-    let LOBool value = ltoBool $ getElement stack rb --Convert RB to boolean value
-        raVal = if value then LOBool False else LOBool True --invert value
-    in
-    updateStack state (\stack -> setElement stack ra raVal)
-  | opCode == LEN =
-    updateStack state (\stack -> setElement stack ra $ lLen $ getElement stack rb)
-  | opCode == CONCAT =
-    updateStack state (\stack -> setElement stack ra $ concatOP stack rb rc)
-  | opCode == JMP =
-    setPC state $ rsbx + getPC state
-  | opCode == CLOSURE =
-      execCLOSURE state ra rbx
-  | opCode == VARARG =
-      updateStack state (\s -> updateVarArg s callInfo ra rb)
-  | opCode == SELF =
+      return $ LuaState (LuaExecutionThread (LuaFunctionInstance stack instructions constList funcPrototype varargs newUpvalues) prevInst pc execState callInfo) globals
+    GETTABLE ->
+      let LOTable table = getElement stack rb :: LuaObject
+          value = getTableElement table $ decodeConst rc
+      in
+      return $ updateStack state (\s -> setElement s ra value)
+    SETTABLE ->
+      let value = getElement stack rc
+          LOTable table = getElement stack ra
+          newTable = LOTable $ setTableElement table (decodeConst rb) value
+      in
+      return $ updateStack state (\s -> setElement s ra newTable)
+    ADD ->
+      let x = ltoNumber $ decodeConst rb
+          y = ltoNumber $ decodeConst rc
+      in
+      return $ updateStack state (\s -> setElement s ra $ ladd x y)
+    SUB ->
+      let x = ltoNumber $ decodeConst rb
+          y = ltoNumber $ decodeConst rc
+      in
+      return $ updateStack state (\s -> setElement s ra $ lsub x y)
+    MUL ->
+      let x = ltoNumber $ decodeConst rb
+          y = ltoNumber $ decodeConst rc
+      in
+      return $ updateStack state (\s -> setElement s ra $ lmul x y)
+    DIV ->
+      let x = ltoNumber $ decodeConst rb
+          y = ltoNumber $ decodeConst rc
+      in
+      return $ updateStack state (\s -> setElement s ra $ ldiv x y)
+    MOD ->
+      let x = ltoNumber $ decodeConst rb
+          y = ltoNumber $ decodeConst rc
+      in
+      return $ updateStack state (\s -> setElement s ra $ lmod x y)
+    POW ->
+      let x = ltoNumber $ decodeConst rb
+          y = ltoNumber $ decodeConst rc
+      in
+      return $ updateStack state (\s -> setElement s ra $ lpow x y)
+    UNM ->
+      let LONumber x = ltoNumber $ getElement stack rb
+      in
+      return $ updateStack state (\s -> setElement stack ra (LONumber (-x)))
+    NOT ->
+      let LOBool value = ltoBool $ getElement stack rb --Convert RB to boolean value
+          raVal = if value then LOBool False else LOBool True --invert value
+      in
+      return $ updateStack state (\stack -> setElement stack ra raVal)
+    LEN ->
+      return $ updateStack state (\stack -> setElement stack ra $ lLen $ getElement stack rb)
+    CONCAT ->
+      return $ updateStack state (\stack -> setElement stack ra $ concatOP stack rb rc)
+    JMP ->
+      return $ setPC state $ rsbx + getPC state
+    CLOSURE ->
+      return $ execCLOSURE state ra rbx
+    VARARG ->
+      return $ updateStack state (\s -> updateVarArg s callInfo ra rb)
+    SELF ->
       let index = decodeConst rc
           table = getElement stack rb
           callee = (\(LOTable t) -> getTableElement t index) table :: LuaObject
           update = (\s -> setElement s ra callee) . (\s -> setElement s (ra+1) table) :: (LuaStack s) => s -> s
       in
-      updateStack state update
-  | opCode == LuaLoader.EQ =
+      return $ updateStack state update
+    LuaLoader.EQ ->
       let a = decodeConst rb
           b = decodeConst rc
           comparison = a == b
           result     = not $ compBtoI comparison ra
-      in  if result then incPC state
+      in  return $ if result then incPC state
           else state
-  | opCode == LuaLoader.LT =
+    LuaLoader.LT ->
       let a = decodeConst rb
           b = decodeConst rc
           comparison = a < b
           result     = not $ compBtoI comparison ra
-      in  if result then incPC state
+      in  return $ if result then incPC state
           else state
-  | opCode == LuaLoader.LE =
+    LuaLoader.LE ->
       let a = decodeConst rb
           b = decodeConst rc
           comparison = a <= b
           result     = not $ compBtoI comparison ra
-      in  if result then incPC state
+      in  return $ if result then incPC state
           else state
-  | opCode == TEST =
+    TEST ->
       let (LOBool a) = ltoBool $ getElement stack ra :: LuaObject
           match = compBtoI a rc
       in
-      if not match then incPC state
+      return $ if not match then incPC state
         else state
-  | opCode == TESTSET =
-    let (LOBool b) = ltoBool $ getElement stack rb :: LuaObject
-        match = compBtoI b rc
-    in
-    if match then updateStack state (\stack -> setElement stack ra $ getElement stack rb)
-      else incPC state
-  | opCode == FORPREP =
+    TESTSET ->
+      let (LOBool b) = ltoBool $ getElement stack rb :: LuaObject
+          match = compBtoI b rc
+      in
+      return $ if match then updateStack state (\stack -> setElement stack ra $ getElement stack rb)
+        else incPC state
+    FORPREP ->
       let step = getElement stack $ ra+2
           index = lsub (getElement stack ra) step
       in
-      setPC
+      return $ setPC
         (updateStack state $ const $ setElement stack ra index) --Update ra in the stack
         (getPC state + rsbx)
-  | opCode == FORLOOP =
-      error "Undefined"
-  | opCode == TFORLOOP =
-      error "Undefined"
-  | opCode == NEWTABLE =
-      updateStack state (\stack -> setElement stack ra $ LOTable createTable)
-  | opCode == SETLIST =
+    FORLOOP ->
+      let index = ladd (getElement stack $ ra + 2) (getElement stack ra)
+          limit = getElement stack $ ra + 1
+          stepping = getElement stack $ ra + 2
+          comparison = if lvNumber stepping >= 0 then (<=) else (>=) :: Double -> Double -> Bool --Check depends on sign of stepping
+          check = Data.Function.on comparison lvNumber -- (\a b -> comparison (lvNumber a) (lvNumber b))
+          newState = updateStack state $ \s -> setElement s ra index
+      in
+      return $ if check index limit then
+        setPC
+          (updateStack newState $ \s -> setElement s (ra+3) index )
+          (rsbx + getPC state)
+          else state
+
+    TFORLOOP ->
+      error "TFORLOOP Undefined"
+    NEWTABLE ->
+      return $ updateStack state (\stack -> setElement stack ra $ LOTable createTable)
+    SETLIST ->
       -- used to set an array of elements at once
       let table = getElement stack ra
           elementCount = if rb > 0 then rb else stackSize stack - (ra + 1)
@@ -265,26 +299,13 @@ execPureOP
           newPairs = zip (map (LONumber . fromIntegral) [index ..]) elements
           newTable = foldl (\(LOTable t) (k, v) -> LOTable $ setTableElement t k v) table newPairs
       in
-      updateStack state (\s -> setElement s ra newTable)
-  | opCode `elem` [CALL, TAILCALL, RETURN] =
-      state
-  | otherwise = error "Unknown OP-Code"
-  where
-     LuaFunctionInstance stack instructions constList funcPrototype varargs upvalues = functionInst
-     LuaMap stackMap = stack
-     nextInstruction = instructions !! pc
-     opCode = LuaLoader.op nextInstruction :: LuaOPCode
-     ra = LuaLoader.ra nextInstruction :: Int
-     rb = LuaLoader.rb nextInstruction
-     rc = LuaLoader.rc nextInstruction
-     rbx = LuaLoader.rbx nextInstruction
-     rsbx = LuaLoader.rsbx nextInstruction
+      return $ updateStack state (\s -> setElement s ra newTable)
+    CALL -> runLuaFunction $ runCall $ return state
+    TAILCALL -> runLuaFunction $ tailCall $ return state
+    RETURN -> runLuaFunction $ returnCall $ return state
 
-     --For K enccoding bit 9 deternines if we use a constant or a stack value
-     decodeConst :: Int -> LuaObject
-     decodeConst register = if (register Bits..&. 256) == 256 then
-       getConst constList (register - 256) else
-         getElement stack register
+    otherwise -> error "Unknown OP-Code"
+
 
 compBtoI :: Bool -> Int -> Bool
 compBtoI b i = b && i > 0 || not b && i == 0
@@ -312,24 +333,19 @@ execCLOSURE state@(LuaState executionThread globals) ra rbx =
 runLuaFunction :: ST s LuaState -> ST s LuaState
 runLuaFunction state = do
   state <- state
-  if lGetRunningState state /= LuaStateRunning then return state else do
-    state <- return $ execPureOP state --execute simple op codes
-    --let (LuaState executionThread@(LuaExecutionThread functionInst _prev_func pc execState callInfo) globals) = state
-    --let (LuaFunctionInstance stack instructions constList funcPrototype _varargs upvalues) = functionInst
-    let instruction = getInstruction state :: LuaInstruction
-    let opCode = LuaLoader.op instruction
+  --In case we reached end of execution return resulting state
+  if not $ isRunning state then return state else do
 
-    unsafeIOToST $ putStrLn $ ppLuaInstruction instruction
+    state <- execOP $ return state --execute simple op codes
 
-    --printStack $ return state
-    --traceM "Handle op code"
-    case opCode of
-      --We increment the callers pc, then we change the context with runCall before tail-calling back to runLuaFunction
-      CALL -> runLuaFunction $ runCall $ return state
-      RETURN -> runLuaFunction $ returnCall $ return state
-      TAILCALL -> runLuaFunction $ tailCall $ return state
-      otherwise -> runLuaFunction $ return $ incPC state --Execute next instruction in this function
+    if isRunning state then
+      runLuaFunction $ return $ incPC state --Execute next instruction in this function
+      else
+        return state
+    where
+      isRunning = (LuaStateRunning ==) . lGetRunningState :: LuaState -> Bool
 
+--if the current instruction is a call instruction return the function to be called
 getCallee :: LuaState -> LuaObject
 getCallee state =
   let inst = getInstruction state
@@ -364,6 +380,9 @@ isLuaCall state =
 runCall :: ST s LuaState -> ST s LuaState
 runCall state = do
   s <- state
+  let op = getRelativeInstruction s 0
+--  unsafeIOToST $ print $ getElement (lGetStateStack s) (LVM.ra op)
+--  unsafeIOToST $ print (ppLuaInstruction $ getRelativeInstruction s 0)
   if isLuaCall s then runLuaCall state else runHaskellCall state
 
 -- | returns the called function and its parameters, ra is callee function
@@ -458,13 +477,13 @@ returnCall state = do
 returnByOrigin :: ST s LuaState -> LuaExecutionThread -> [LuaObject] -> ST s LuaState
 --When returning to Haskell we only pass back the list of results
 returnByOrigin state (LuaExecInstanceTop undefined) results = do
-  Trace.traceM "Returning to Haskell"
+  --Trace.traceM "Returning to Haskell"
   globals <- Monad.liftM lGetGlobals state
   return $ LuaState (LuaExecInstanceTop results) globals
 
 --Returning back to a caller lua function
 returnByOrigin state exec results = do
-  unsafeIOToST $ traceIO "Returning to Lua Caller"
+  --unsafeIOToST $ traceIO "Returning to Lua Caller"
   (LuaState (LuaExecutionThread _ prevExecInst _ _ callInfo) globals) <- state
   {-do
     inst <- getInstruction <$> state

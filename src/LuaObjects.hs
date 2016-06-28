@@ -12,6 +12,10 @@ import LuaLoader
 import Parser as P
 
 
+data LuaObject = LONil | LONumber { lvNumber :: !Double} | LOString String | LOTable LTable |
+  LOFunction LuaFunctionInstance | LOBool Bool | LOUserData {-TODO-} | LOThread {-TODO-}
+  deriving (Eq, Show, Ord)
+
 getConst :: LuaConstList -> Int -> LuaObject
 getConst (LuaConstList size constants) pos =
   let constant = constants !! fromIntegral pos
@@ -54,11 +58,6 @@ ppLuaInstruction inst =
       namedAtt = flip zip attributes $ fmap (++":") ["op", "ra", "rb", "rc", "rsbx", "rbx"] :: [(String, String)]
   in
   foldl (\a b -> a ++ " " ++ uncurry (++) b) "" namedAtt
-
-data LuaObject = LONil | LONumber Double | LOString String | LOTable LTable |
-  LOFunction LuaFunctionInstance | LOBool Bool | LOUserData {-TODO-} | LOThread {-TODO-}
-  deriving (Eq, Show, Ord)
-
 
 isNil :: LuaObject -> Bool
 isNil o
