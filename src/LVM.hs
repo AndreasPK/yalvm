@@ -244,7 +244,12 @@ execPureOP
     if match then updateStack state (\stack -> setElement stack ra $ getElement stack rb)
       else incPC state
   | opCode == FORPREP =
-      error "Undefined"
+      let step = getElement stack $ ra+2
+          index = lsub (getElement stack ra) step
+      in
+      setPC
+        (updateStack state $ const $ setElement stack ra index) --Update ra in the stack
+        (getPC state + rsbx)
   | opCode == FORLOOP =
       error "Undefined"
   | opCode == TFORLOOP =

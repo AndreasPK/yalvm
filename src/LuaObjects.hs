@@ -147,6 +147,7 @@ lgetMaxStackSize (LOFunction (LuaFunctionInstance _ _ _ fh _ _)) =
 ladd :: LuaObject -> LuaObject -> LuaObject
 ladd (LONumber x) (LONumber y) = LONumber $ x + y
 
+-- | sub a b = a - b
 lsub :: LuaObject -> LuaObject -> LuaObject
 lsub (LONumber x) (LONumber y) = LONumber $ x - y
 
