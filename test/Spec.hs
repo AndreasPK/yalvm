@@ -16,14 +16,16 @@ baseDir = "D:/Uni/00_SS2016/90_AbsMachine/yalvm/test"
 main :: IO ()
 main = do
   --traceM "main"
-  r <- testFile "test/testFiles/testReturn.luac" [LOString "123\0"]
-  print r
-  r <- testFile "test/testFiles/nestedCall.luac" [LOString "123\0"]
-
-  print r
+  print "testReturn"
+  print . show <$> testFile "test/testFiles/testReturn.luac" [LOString "123\0"]
+  print "nestedCall"
+  print . show <$> testFile "test/testFiles/nestedCall.luac" [LOString "123\0"]
+  print "callHaskell"
   print . show <$> testFile "test/testFiles/callHaskell.luac" [LOString "123\0"]
 
-  print . show <$> testFile "test/testFiles/upvalues.luac" [LONumber 3]
+  print "test(.lua)"
+  print . show <$> testFile "test/testFiles/test.luac" [LONumber 3]
+
 
   --putStrLn "Test suite not yet implemented"
   --runTestTT operatorTests
@@ -40,7 +42,7 @@ testStack :: LuaMap -> LuaInstruction -> LuaMap -> Bool
 testStack stack instruction expectedStack =
   let state = wrapStackTest stack instruction
   in
-  lGetStateStack (execPureOP state) == expectedStack
+  lGetStateStack (runST $ execOP $ return state) == expectedStack
 
 lcompareResults :: [LuaObject] -> LuaMap -> [(Bool, LuaObject, LuaObject)]
 lcompareResults expected results = zipWith compareLO expected (toList results)
