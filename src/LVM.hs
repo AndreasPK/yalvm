@@ -57,10 +57,6 @@ lGetGlobals :: LuaState -> Map.Map String LuaObject
 lGetGlobals (LuaState _ globals) = globals
 
 
-stackChange :: LuaFunctionInstance -> LuaMap -> LuaFunctionInstance
-stackChange (LuaFunctionInstance _ instructions constList funcPrototype varargs upvalues) stack =
-  LuaFunctionInstance stack instructions constList funcPrototype varargs upvalues
-
 -- | Applies the given function to the Lua stack
 updateStack :: LuaState -> (LuaMap -> LuaMap) -> LuaState
 updateStack (LuaState (LuaExecutionThread (LuaFunctionInstance stack instructions constList funcPrototype varargs upvalues) prevInst pc execState callInfo) globals) updateFunction =
@@ -130,7 +126,7 @@ execOP state = do
 
   let instruction = getInstruction state
       opCode = LuaLoader.op instruction
-  putStrLn $ show (getPC state + 1) ++ ":" ++ ppLuaInstruction instruction
+  --putStrLn $ show (getPC state + 1) ++ ":" ++ ppLuaInstruction instruction
 
   case opCode of
     MOVE -> -- RA = RB
@@ -478,13 +474,13 @@ returnCall state = do
 returnByOrigin :: IO LuaState -> LuaExecutionThread -> [LuaObject] -> IO LuaState
 --When returning to Haskell we only pass back the list of results
 returnByOrigin state (LuaExecInstanceTop undefined) results = do
-  Trace.traceM "Returning to Haskell"
+  --Trace.traceM "Returning to Haskell"
   globals <- Monad.liftM lGetGlobals state
   return $ LuaState (LuaExecInstanceTop results) globals
 
 --Returning back to a caller lua function
 returnByOrigin state exec results = do
-  traceIO "Returning to Lua Caller"
+  --traceIO "Returning to Lua Caller"
   (LuaState (LuaExecutionThread _ prevExecInst _ _ callInfo) globals) <- state
 
   --unsafeIOToST $ traceIO "Returning to Lua Caller"

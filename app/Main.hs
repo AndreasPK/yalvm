@@ -17,6 +17,22 @@ import qualified Control.Monad              as Monad
 import qualified LRT
 import Control.Monad.ST.Unsafe
 import Control.Monad.ST
+import System.Environment as Sys
+
+
+runLuaCode :: FilePath -> IO LVM.LuaState
+runLuaCode path = do
+  --traceM "runLuaCode"
+  fileContent <- BS.readFile path :: IO BS.ByteString
+  --traceM "fr"
+  let chunk = either (error "Failed to parse binary file") id $ LuaLoader.loadLua fileContent -- :: IO (Either String Parser.LuaBinaryFile)
+  vm <- LVM.startExecution $ Parser.getTopFunction chunk :: IO LVM.LuaState
+  --traceM "vc"
+  vm <- return $ LRT.registerAll vm
+  --traceM "Run chunk"
+  LVM.runLuaFunction $ return vm
+  --traceM "ranLuaCode"
+
 
 file :: IO ByteString
 file = BS.readFile "luac.out"
@@ -30,13 +46,19 @@ luaChunk = do
 
 main :: IO ()
 main = do
+  path <- Prelude.head <$> getArgs :: IO String
+  print $ "Running " ++ path
+  runLuaCode path
+  return ()
+
+  {-file <- BS.readFile path
   luaChunk <- Main.luaChunk
   let luaTopFunction = Parser.getTopFunction luaChunk :: Parser.LuaFunctionHeader
-  state <- stToIO $ LVM.startExecution luaTopFunction :: IO LVM.LuaState
+  state <- LVM.startExecution luaTopFunction :: IO LVM.LuaState
 
   state <- return $ LRT.setGlobal state "print" $ LOFunction LRT.lrtPrint
 
-  result <- stToIO$ LVM.runLuaFunction $ return state
+  result <- LVM.runLuaFunction $ return state-}
 
   --Prelude.putStrLn "\nVM State:"
   --print result
@@ -44,7 +66,7 @@ main = do
   --Prelude.putStrLn "\nFinal Stack:"
   --LVM.printStack $ return result
 
-  Prelude.putStrLn $ Prelude.replicate 10 '\n'
+  --Prelude.putStrLn $ Prelude.replicate 10 '\n'
   --print "lalala"
 
   -- BS8.putStrLn x
