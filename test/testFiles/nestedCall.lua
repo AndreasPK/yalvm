@@ -1,5 +1,3 @@
-return 1
-
 function f(x)
   if x < 1 then
     return 1
@@ -10,4 +8,4 @@ end
 
 function ff(x) return f(x) end
 
-return ff(10)
+return  ff(5)
