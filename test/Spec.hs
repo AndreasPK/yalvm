@@ -16,43 +16,50 @@ baseDir = "D:/Uni/00_SS2016/90_AbsMachine/yalvm/test"
 main :: IO ()
 main = do
   --traceM "main"
-  print "testReturn"
-  print . show <$> testFile "test/testFiles/testReturn.luac" [LOString "123\0"]
-  print "nestedCall"
-  print . show <$> testFile "test/testFiles/nestedCall.luac" [LOString "123\0"]
-  print "callHaskell"
-  print . show <$> testFile "test/testFiles/callHaskell.luac" [LOString "123\0"]
+  --print "testReturn"
+  result <- mapM (uncurry testFile)
+        [ ("test/testFiles/testReturn.luac", [LOString "123\0"])
+        , ("test/testFiles/nestedCall.luac", [LONumber 6])
+        , ("test/testFiles/callHaskell.luac", [LONumber 5])
+        , ("test/testFiles/fac.luac", [LONumber 120])
+        , ("test/testFiles/print.luac", [LOBool True])
+        , ("test/testFiles/forNum.luac", [LONumber 6])
+        , ("test/testFiles/test.luac", [LONumber 120])
+        ]
 
-  print "test(.lua)"
-  print . show <$> testFile "test/testFiles/test.luac" [LONumber 3]
+  traverse print result
+
 
 
   --putStrLn "Test suite not yet implemented"
   --runTestTT operatorTests
   return ()
 
-operatorTests = TestList [
+{-operatorTests = TestList [
   True ~=? testStack (fromList [LONumber 1, LONumber 2]) (create (MUL, 0, 0, 0)) (fromList [LONumber 3, LONumber 2])
-  ]
+  ] -}
 
 wrapStackTest :: LuaMap -> LuaInstruction -> LuaState
 wrapStackTest stack instruction =  LuaState (LuaExecutionThread (LuaFunctionInstance stack [instruction] undefined undefined undefined undefined) undefined 0 undefined undefined) undefined
 
-testStack :: LuaMap -> LuaInstruction -> LuaMap -> Bool
+{-testStack :: LuaMap -> LuaInstruction -> LuaMap -> IO Bool
 testStack stack instruction expectedStack =
   let state = wrapStackTest stack instruction
   in
-  lGetStateStack (runST $ execOP $ return state) == expectedStack
+  fmap (==) (fmap lGetStateStack (execOP $ return state))  expectedStack-}
 
-lcompareResults :: [LuaObject] -> LuaMap -> [(Bool, LuaObject, LuaObject)]
-lcompareResults expected results = zipWith compareLO expected (toList results)
+lcompareResults :: [LuaObject] -> LuaMap -> IO [(Bool, LuaObject, LuaObject)]
+lcompareResults expected results = do
+  let comp = zipWith compareLO expected (toList results)
+  print comp
+  return comp
 
 testFile :: FilePath -> [LuaObject] -> IO [(Bool, LuaObject, LuaObject)]
 testFile path objs = do
   --traceM "testFile"
   let vmResult = runLuaCode path
   stack <- fmap lGetStateStack vmResult
-  return $ lcompareResults objs stack
+  lcompareResults objs stack
 
 
 runLuaCode :: FilePath -> IO LuaState
@@ -61,11 +68,11 @@ runLuaCode path = do
   fileContent <- BS.readFile path :: IO BS.ByteString
   --traceM "fr"
   let chunk = either (error "Failed to parse binary file") id $ LuaLoader.loadLua fileContent -- :: IO (Either String Parser.LuaBinaryFile)
-  vm <- stToIO $ LVM.startExecution $ Parser.getTopFunction chunk :: IO LuaState
+  vm <- LVM.startExecution $ Parser.getTopFunction chunk :: IO LuaState
   --traceM "vc"
   vm <- return $ LRT.registerAll vm
   --traceM "Run chunk"
-  stToIO $ LVM.runLuaFunction $ return vm
+  LVM.runLuaFunction $ return vm
   --traceM "ranLuaCode"
 
 

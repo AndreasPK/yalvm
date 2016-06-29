@@ -10,6 +10,7 @@ import Data.Maybe
 
 import LuaLoader
 import Parser as P
+import Debug.Trace
 
 
 data LuaObject = LONil | LONumber { lvNumber :: !Double} | LOString String | LOTable LTable |
@@ -172,7 +173,7 @@ class LuaStack l where
   setElement :: l -> Int -> LuaObject -> l
   getElement :: l -> Int -> LuaObject
   getRange :: l -> Int -> Int -> [LuaObject]--get elements stack[a..b]
-  setRange :: l -> Int -> [LuaObject] -> l
+  setRange :: l -> Int -> [LuaObject] -> l --placed given objects in stack starting at position p
   stackSize :: l -> Int
   setStackSize :: l -> Int -> l
   pushObjects :: l -> [LuaObject] -> l
@@ -263,8 +264,10 @@ instance Show LuaFunctionInstance where
   show (HaskellFunctionInstance name _ _) = "(HaskellFunction: " ++ name ++ ")"
   show (LuaFunctionInstance stack _ constList fh varargs upvalues) = "(Lua Function: " ++ show (stack, constList, fh, varargs, upvalues) ++ ")"
 
-
-
+-- | Get line at which instruction was defined
+-- function pc -> line
+getLine :: LuaFunctionInstance -> Int -> Int
+getLine =  (!!) . fhInstPos . funcHeader
 
 data LuaExecutionState = LuaStateSuspended | LuaStateRunning | LuaStateDead deriving (Eq, Show, Ord, Enum)
 
