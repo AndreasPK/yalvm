@@ -7,15 +7,16 @@ import Control.Monad.ST as ST
 --import Control.Monad.ST.Lazy
 import Data.Primitive.Array
 import Data.Maybe
+import Data.IORef
 
 import LuaLoader
 import Parser as P
 import Debug.Trace
 
-
-data LuaObject = LONil | LONumber { lvNumber :: !Double} | LOString String | LOTable LTable |
+data LuaObject = LONil | LONumber { lvNumber :: !Double} | LOString String | LOTable !LTable |
   LOFunction LuaFunctionInstance | LOBool Bool | LOUserData {-TODO-} | LOThread {-TODO-}
   deriving (Eq, Show, Ord)
+
 
 getConst :: LuaConstList -> Int -> LuaObject
 getConst (LuaConstList size constants) pos =
@@ -44,7 +45,6 @@ getTableElement (LTable m) k
 -- If the key is nil ignore the operation
 -- If the value is nil remove the element from the map
 -- Otherwise update/add the entry
-
 setTableElement :: LTable -> LuaObject -> LuaObject -> LTable
 setTableElement table@(LTable m) k v
   | isNil k = table

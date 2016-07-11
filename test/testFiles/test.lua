@@ -6,8 +6,12 @@ function fac(x)
   end
 end
 
-for i=1,10 do
-  print(fac(i))
+for x=1,10000 do
+  local r = ""
+  for i=1, 100 do
+    r = r .. "\n," .. fac(i)
+  end
+  if(x%1000==0) then print(1) end
 end
 
 return fac(5)

@@ -1,3 +1,4 @@
+--calculate factorial
 function fac(x)
   if x <= 1 then
     return 1
@@ -10,4 +11,5 @@ for i=1,10 do
   print(fac(i))
 end
 
+--returns 120
 return fac(5)

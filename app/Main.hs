@@ -2,7 +2,6 @@ module Main where
 
 import           Data.ByteString            as BS
 import           Data.ByteString.Char8      as BS8
-import           Lib
 import           LuaLoader
 
 import           Data.Attoparsec.ByteString as PBS

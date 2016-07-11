@@ -75,7 +75,6 @@ runLuaCode path = do
   LVM.runLuaFunction $ return vm
   --traceM "ranLuaCode"
 
-
 compareLO :: LuaObject -> LuaObject -> (Bool, LuaObject, LuaObject)
 compareLO a b =
   (a == b, a, b)

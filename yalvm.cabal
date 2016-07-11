@@ -15,7 +15,7 @@ cabal-version:       >=1.10
 
 library
   hs-source-dirs:      src
-  exposed-modules:     Lib, Parser, LVM, LuaLoader, LuaObjects, LRT
+  exposed-modules:     Parser, LVM, LuaLoader, LuaObjects, LRT
   build-depends:       base >= 4.7 && < 5
                       ,binary
                       ,bytestring

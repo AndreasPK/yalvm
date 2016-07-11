@@ -126,7 +126,7 @@ execOP state = do
 
   let instruction = getInstruction state
       opCode = LuaLoader.op instruction
-  --putStrLn $ show (getPC state + 1) ++ ":" ++ ppLuaInstruction instruction
+  putStrLn $ show (getPC state + 1) ++ ":" ++ ppLuaInstruction instruction
 
   case opCode of
     MOVE -> -- RA = RB
@@ -160,16 +160,19 @@ execOP state = do
       in
       return $ incPC $ LuaState (LuaExecutionThread (LuaFunctionInstance stack instructions constList funcPrototype varargs newUpvalues) prevInst pc execState callInfo) globals
     GETTABLE ->
-      let LOTable table = getElement stack rb :: LuaObject
-          value = getTableElement table $ decodeConst rc
+      let index = decodeConst rc
+          LOTable table = getElement stack rb :: LuaObject
+          value = getTableElement table index
       in
-      return $ incPC $ updateStack state (\s -> setElement s ra value)
+      traceShow(table, value, index)
+      return $ incPC $ updateStack state $ \s -> setElement s ra value
     SETTABLE ->
-      let value = getElement stack rc
+      let value = decodeConst rc
           LOTable table = getElement stack ra
           newTable = LOTable $ setTableElement table (decodeConst rb) value
       in
-      return $ incPC $ updateStack state (\s -> setElement s ra newTable)
+      --traceShow (ra, table, newTable)
+      return $ incPC $ updateStack state $ \s -> setElement s ra newTable
     ADD ->
       let x = ltoNumber $ decodeConst rb
           y = ltoNumber $ decodeConst rc
