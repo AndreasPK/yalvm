@@ -6,6 +6,7 @@ import LVM
 import Control.Monad as Monad
 import qualified Data.Map as Map
 import Control.Monad.ST as ST
+import qualified Data.Foldable as Foldable
 
 --add global values, names are to be given without trailing zero
 setGlobal :: LuaState -> String -> LuaObject -> LuaState
@@ -23,10 +24,10 @@ registerAll :: LuaState -> LuaState
 registerAll s = registerFunction s definePrint "print"
 
 
-definePrint :: IO LuaMap -> IO LuaMap
+definePrint :: (LuaStack stack) => IO stack -> IO LuaMap
 definePrint arguments = do
-  a <- arguments
-  mapM_ ((\ (LOString s) -> putStrLn s) . ltoString) (toList a)
-  return $ createStack 1
+  al <- toList arguments :: IO [LuaObject]
+  Foldable.traverse_ (print . loString . ltoString) al
+  createStack 1
 
 lrtPrint = HaskellFunctionInstance "print" (createStack 0) definePrint

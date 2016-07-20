@@ -1,3 +1,5 @@
+{-# LANGUAGE FlexibleInstances #-}
+
 module LuaObjects(module LuaObjects) where
 
 import qualified Data.Map.Strict as Map
@@ -8,14 +10,35 @@ import Control.Monad.ST as ST
 import Data.Primitive.Array
 import Data.Maybe
 import Data.IORef
+import System.IO.Unsafe
+import qualified Data.Sequence as Sequence
+import Control.Monad
 
 import LuaLoader
 import Parser as P
 import Debug.Trace
 
-data LuaObject = LONil | LONumber { lvNumber :: !Double} | LOString String | LOTable !LTable |
-  LOFunction LuaFunctionInstance | LOBool Bool | LOUserData {-TODO-} | LOThread {-TODO-}
+data LuaObject = LONil | LONumber { lvNumber :: !Double} | LOString { loString :: !String} | LOTable !LTable |
+  LOFunction { loFunction :: LuaFunctionInstance} | LOBool Bool | LOUserData {-TODO-} | LOThread {-TODO-}
   deriving (Eq, Show, Ord)
+
+type LuaRef = IORef LuaObject
+
+instance Show (IORef LuaObject) where
+  show o = show (unsafePerformIO $ readLR o)
+
+instance Ord (IORef LuaObject) where
+  (<=) a b = error "Order not defined for LuaRef"
+
+
+readLR :: LuaRef -> IO LuaObject
+readLR = readIORef
+
+updateLR :: LuaRef -> (LuaObject -> LuaObject) -> IO ()
+updateLR = modifyIORef'
+
+writeLR :: LuaRef -> LuaObject -> IO ()
+writeLR = writeIORef
 
 
 getConst :: LuaConstList -> Int -> LuaObject
@@ -88,20 +111,21 @@ ltoString x@(LOString s) = x
 ltostring x = LOString $ show x
 
 lgetFunctionHeader :: LuaObject -> LuaFunctionHeader
-lgetFunctionHeader (LOFunction (LuaFunctionInstance stack instructions constList functionHeader varargs upvalues)) =
-  functionHeader
+lgetFunctionHeader = funcHeader . loFunction
 
+--functionInstance -> FunctionIndex -> FunctionHeader
 lgetPrototype :: LuaObject -> Int -> LuaFunctionHeader
-lgetPrototype (LOFunction (LuaFunctionInstance stack instructions constList functionHeader varargs upvalues)) pos =
-  let LuaFunctionHeader name startLine endLine upvalueCount parameterCount varargFlag stackSize instructions constList functionList instPosList localList upvalueList = functionHeader
-  in
-  functionList !! pos
+lgetPrototype (LOFunction func@(LuaFunctionInstance stack instructions constList functionHeader varargs upvalues _ )) =
+  --let LuaFunctionHeader name startLine endLine upvalueCount parameterCount varargFlag stackSize instructions constList functionList instPosList localList upvalueList = functionHeader
+  --in
+  ((!!) . P.fhFunctions . funcHeader) func
+  --functionList !! pos
 
 -- | Create a function instance based on prototype, doesn't set up passed parameters/upvalues/varargs
 linstantiateFunction :: LuaFunctionHeader -> LuaObject
 linstantiateFunction functionHeader@(LuaFunctionHeader name startLine endLine upvalueCount
   parameterCount varargFlag stackSize instructions constList functionList
-  instPosList localList upvalueList) =
+  instPosList localList upvalueList ) =
   let
   functionInstance =
     LuaFunctionInstance
@@ -111,37 +135,37 @@ linstantiateFunction functionHeader@(LuaFunctionHeader name startLine endLine up
       functionHeader
       (LuaMap (Map.empty :: Map.Map Int LuaObject))
       (LuaRTUpvalueList IntMap.empty)
+      undefined --closure
   in
   LOFunction functionInstance
 
 
---Set the upvalues for a function instance
-lsetupvalues :: LuaObject -> LuaRTUpvalueList -> LuaObject
-lsetupvalues (LOFunction (LuaFunctionInstance stack inst constList fh varargs _)) upvalues =
-  LOFunction (LuaFunctionInstance stack inst constList fh varargs upvalues)
-
 -- | Set the variable argument list based on the given list of values
 -- lsetvarargs function arguments -> updatedFunction
 lsetvarargs :: LuaObject -> [LuaObject] -> LuaObject
-lsetvarargs (LOFunction (LuaFunctionInstance stack inst constList fh _ upvalues)) parameters =
+lsetvarargs (LOFunction func) parameters =
   let varargs = LuaMap $ Map.fromList $ zip [0..] parameters
   in
-  LOFunction (LuaFunctionInstance stack inst constList fh varargs upvalues)
+  LOFunction (func {funcVarargs = varargs}) -- upvalues closure)
 
 lgetArgCount :: LuaObject -> Int
-lgetArgCount (LOFunction (LuaFunctionInstance _ _ _ fh _ _)) =
-  let (LuaFunctionHeader _ _ _ upvalCount parCount varargFlags _ _ _ _ _ _ _) = fh
+lgetArgCount (LOFunction func) =
+  let (LuaFunctionHeader _ _ _ upvalCount parCount varargFlags _ _ _ _ _ _ _) = funcHeader func
   in fromIntegral parCount
 
+--varargFlag != 0 represents a variable argument function
 lisVarArg :: LuaObject -> Bool
-lisVarArg (LOFunction (LuaFunctionInstance _ _ _ fh _ _)) =
-  let (LuaFunctionHeader _ _ _ upvalCount parCount varargFlags _ _ _ _ _ _ _) = fh
-  in varargFlags /= 0
+lisVarArg (LOFunction func) =
+  0 /= (P.fhVarargFlag . funcHeader) func
 
 lgetMaxStackSize :: LuaObject -> Int
-lgetMaxStackSize (LOFunction (LuaFunctionInstance _ _ _ fh _ _)) =
-  let (LuaFunctionHeader _ _ _ upvalCount parCount varargFlags stackSize _ _ _ _ _ _) = fh
-  in fromIntegral stackSize
+lgetMaxStackSize =
+  fromIntegral . fhMaxStacksize . funcHeader . loFunction
+
+--lgetMaxStackSize (LOFunction (LuaFunctionInstance _ _ _ fh _ _)) =
+--  let (LuaFunctionHeader _ _ _ upvalCount parCount varargFlags stackSize _ _ _ _ _ _) = fh
+--  in fromIntegral stackSize
+
 
 
 ladd :: LuaObject -> LuaObject -> LuaObject
@@ -169,37 +193,47 @@ lpow (LONumber x) (LONumber y) = LONumber $ (**) x y
 
 -- | Lua Stack wrapper TODO: Performance optimization
 class LuaStack l where
-  createStack :: Int -> l
-  setElement :: l -> Int -> LuaObject -> l
-  getElement :: l -> Int -> LuaObject
-  getRange :: l -> Int -> Int -> [LuaObject]--get elements stack[a..b]
-  setRange :: l -> Int -> [LuaObject] -> l --placed given objects in stack starting at position p
-  stackSize :: l -> Int
-  setStackSize :: l -> Int -> l
-  pushObjects :: l -> [LuaObject] -> l
-  fromList :: [LuaObject] -> l
+  createStack :: Int -> IO l
+  setElement :: IO l -> Int -> LuaObject -> IO l
+  getElement :: IO l -> Int -> IO LuaObject
+  getRange :: IO l -> Int -> Int -> IO [LuaObject]--get elements stack[a..b]
+  setRange :: IO l -> Int -> [LuaObject] -> IO l --place given objects in stack starting at position p
+  stackSize :: IO l -> IO Int
+  setStackSize :: IO l -> Int -> IO l
+  pushObjects :: IO l -> [LuaObject] -> IO l
+  fromList :: [LuaObject] -> IO l
   fromList = pushObjects (createStack 0)
-  shrink :: l -> Int -> l --shrink stack by x elements if possible
-  shrink s x = setStackSize s $ stackSize s - x
-  toList :: l -> [LuaObject]
-  toList l = map (getElement l) [0..stackSize l -1]
+  shrink :: IO l -> Int -> IO l --shrink stack by x elements if possible
+  shrink s x = do currentSize <- stackSize s; setStackSize s (currentSize - x)
+  toList :: IO l -> IO [LuaObject]
+  toList l = do count <- stackSize l; mapM (getElement l) [0..count -1]
   setRange stack n objects = foldl (\s (k, v) -> setElement s k v) stack $ zip [n..] objects --requires stack to be at least (n - 1) in size
 
 -- | Maps indexes to a lua object
 newtype LuaMap = LuaMap (Map.Map Int LuaObject) deriving (Eq, Show, Ord)
 
+mstack :: LuaMap -> Map.Map Int LuaObject
+mstack (LuaMap x) = x
+
 instance LuaStack LuaMap where
-  setElement (LuaMap stack) pos obj = LuaMap $ Map.insert pos obj stack
-  getElement (LuaMap stack) pos = fromMaybe LONil $ Map.lookup pos stack
-  createStack size = LuaMap $ Map.fromAscList $ zip [0..size-1] $ repeat LONil
-  stackSize (LuaMap stack) = Map.size stack
-  getRange stack lb rb = map (getElement stack :: Int -> LuaObject) [lb .. rb]
-  setStackSize (LuaMap stack) size
-    | Map.size stack == size = LuaMap stack
-    | Map.size stack > size  = LuaMap $ fst $ Map.split size stack
-    | Map.size stack < size = LuaMap $ Map.union stack $ Map.fromAscList $ zip [Map.size stack .. (size-1)] $ repeat LONil
-  pushObjects (LuaMap stack) objects = LuaMap $ Map.union stack $
-    Map.fromAscList $ zip [(Map.size stack)..] objects
+  setElement m pos obj = do LuaMap stack <- m; return . LuaMap $ Map.insert pos obj stack --m --LuaMap $ Map.insert pos obj stack
+  getElement m pos = do LuaMap stack <- m; return $ fromMaybe LONil $ Map.lookup pos stack
+  createStack size = return $ LuaMap $ Map.fromAscList $ zip [0..size-1] $ repeat LONil
+  stackSize m = do LuaMap stack <- m; return $ Map.size stack
+  getRange stack lb rb = mapM (getElement stack :: Int -> IO LuaObject) [lb .. rb]
+  setStackSize m size = do
+    LuaMap stack <- m
+    case compare (Map.size stack) size of
+      Prelude.EQ -> m
+      GT -> return $ LuaMap $ fst $ Map.split size stack
+      Prelude.LT -> return $ LuaMap $ Map.union stack $ Map.fromAscList $ zip [Map.size stack .. (size-1)] $ repeat LONil
+  pushObjects m objects = do
+    LuaMap stack <- m
+    let size = Map.size stack
+    return $ LuaMap $ Map.union stack $
+      Map.fromAscList $ zip [size..] objects
+
+newtype LuaSeq = LuaSeq (Sequence.Seq LuaRef) deriving (Eq, Show, Ord)
 
 -- | the runtime value of a upvalue
 data LuaRuntimUpvalue =
@@ -213,6 +247,26 @@ data LuaRuntimUpvalue =
 data LuaRTUpvalueList = LuaRTUpvalueList
   (IntMap.IntMap LuaRuntimUpvalue)
   deriving (Eq, Show, Ord)
+
+
+data LuaClosure = LuaClosure {
+  closureRefs :: ![ClosureRef]
+  } deriving (Eq, Show)
+
+--A closure reference can point to the stack of the function or the closure itself
+data ClosureRef = StackRef !Int | ClosedRef !LuaObject deriving (Eq, Show)
+
+
+
+{-
+
+    execFunctionInstance :: !LuaFunctionInstance,
+    execPrevInst :: !LuaExecutionThread,
+    execCurrentPC :: !Int,
+    execRunningState :: !LuaExecutionState,
+    execCallInfo :: !LuaCallInfo }
+
+
 
 dereferenceUpvalue :: LuaRuntimUpvalue -> LuaObject
 dereferenceUpvalue (LRTUpvalueValue x) = x
@@ -232,6 +286,8 @@ setUpvalue (LuaRTUpvalueList m) i obj =
   in
   LuaRTUpvalueList $ IntMap.adjust (updateUpvalue obj) i m
 
+-}
+
 type LuaParameterList = [LuaObject]
 
 
@@ -239,17 +295,18 @@ type LuaParameterList = [LuaObject]
 -- LuaFunctionInstance stack instructions constants funcPrototypes upvalues arguments
 data LuaFunctionInstance =
   LuaFunctionInstance
-  { funcStack :: !LuaMap -- Stack
+  { funcStack :: IO LuaMap -- Stack
   , funcInstructions :: ![LuaInstruction] --List of op codes
   , funcConstants :: !LuaConstList --List of constants
   , funcHeader :: !LuaFunctionHeader --Function prototypes
   , funcVarargs :: !LuaMap --ArgumentList for varargs, starting with index 0
   , funcUpvalues :: !LuaRTUpvalueList --Upvalues missing
+  , funcClosure :: LuaClosure --ToDo
   }
   |
   HaskellFunctionInstance
   { funcName :: !String --name
-  , funcStack :: !LuaMap --Stack
+  , funcStack :: IO LuaMap --Stack
   , funcFunc ::  IO LuaMap -> IO LuaMap
   }
   deriving ()
@@ -260,9 +317,14 @@ instance Eq LuaFunctionInstance where
 instance Ord LuaFunctionInstance where
   (<=) a b = error "Broken typeclass for function instances"
 
+instance Show (IO LuaMap) where
+  show m = unsafePerformIO $ do
+    m <- m
+    return $ show m
+
 instance Show LuaFunctionInstance where
   show (HaskellFunctionInstance name _ _) = "(HaskellFunction: " ++ name ++ ")"
-  show (LuaFunctionInstance stack _ constList fh varargs upvalues) = "(Lua Function: " ++ show (stack, constList, fh, varargs, upvalues) ++ ")"
+  show (LuaFunctionInstance stack _ constList fh varargs upvalues _) = "(Lua Function: " ++ show (stack, constList, fh, varargs, upvalues) ++ ")"
 
 -- | Get line at which instruction was defined
 -- function pc -> line
@@ -282,7 +344,7 @@ data LuaExecutionThread =
     execRunningState :: !LuaExecutionState,
     execCallInfo :: !LuaCallInfo }
   |
-  LuaExecInstanceTop [LuaObject]
+  LuaExecInstanceTop { execResults :: [LuaObject] }
   deriving (Eq, Show, Ord)
 
 -- | Contains information about arguments passed to the function
@@ -296,5 +358,5 @@ callInfo = LuaCallInfo
 callInfoEmpty = LuaCallInfo []
 
 getContainedFunctionHeader :: LuaExecutionThread -> Int -> LuaFunctionHeader
-getContainedFunctionHeader (LuaExecutionThread (LuaFunctionInstance _ _ _ functionHeader _ _ ) _ _ _ _)  =
-  getIndexedFunction functionHeader
+getContainedFunctionHeader (LuaExecutionThread func _ _ _ _)  =
+  getIndexedFunction $ funcHeader func

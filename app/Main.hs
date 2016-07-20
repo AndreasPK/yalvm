@@ -14,6 +14,7 @@ import qualified Parser
 import           LuaObjects
 import qualified Control.Monad              as Monad
 import qualified LRT
+import qualified Data.Foldable              as Foldable
 import Control.Monad.ST.Unsafe
 import Control.Monad.ST
 import System.Environment as Sys
@@ -78,7 +79,8 @@ stackWalk state = do
     ps (LVM.LuaState (LuaObjects.LuaExecInstanceTop res) _) =
       mapM_ print res
     ps state = do
-      let (LVM.LuaState (LuaExecutionThread (LuaFunctionInstance stack _ _ _ _ _) prevInst pc execState callInfo) globals) = state
-      Monad.foldM (\_ n -> print $ getElement stack n) () [0..stackSize stack - 1]
+      let (LVM.LuaState (LuaExecutionThread LuaFunctionInstance { funcStack = stack } prevInst pc execState callInfo) globals) = state
+      ss <- stackSize stack
+      Foldable.traverse_ (fmap print . getElement stack) [0..ss - 1]
       print "1-UP"
       ps $ LVM.LuaState prevInst undefined
