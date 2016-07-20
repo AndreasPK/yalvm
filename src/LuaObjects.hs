@@ -18,7 +18,7 @@ import LuaLoader
 import Parser as P
 import Debug.Trace
 
-data LuaObject = LONil | LONumber { lvNumber :: !Double} | LOString { loString :: !String} | LOTable !LTable |
+data LuaObject = LONil | LONumber { lvNumber :: !Double} | LOString { loString :: !String} | LOTable !(IORef LTable) |
   LOFunction { loFunction :: LuaFunctionInstance} | LOBool Bool | LOUserData {-TODO-} | LOThread {-TODO-}
   deriving (Eq, Show, Ord)
 
@@ -29,6 +29,12 @@ instance Show (IORef LuaObject) where
 
 instance Ord (IORef LuaObject) where
   (<=) a b = error "Order not defined for LuaRef"
+
+instance Show (IORef LTable) where
+  show r = "Some LuaTable"
+
+instance Ord (IORef LTable) where
+  (<=) = error "Can't compare table references"
 
 
 readLR :: LuaRef -> IO LuaObject
@@ -211,9 +217,6 @@ class LuaStack l where
 
 -- | Maps indexes to a lua object
 newtype LuaMap = LuaMap (Map.Map Int LuaObject) deriving (Eq, Show, Ord)
-
-mstack :: LuaMap -> Map.Map Int LuaObject
-mstack (LuaMap x) = x
 
 instance LuaStack LuaMap where
   setElement m pos obj = do LuaMap stack <- m; return . LuaMap $ Map.insert pos obj stack --m --LuaMap $ Map.insert pos obj stack

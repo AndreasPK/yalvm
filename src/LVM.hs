@@ -175,16 +175,18 @@ execOP state = do
     GETTABLE -> do
       index <- decodeConst rc :: IO LuaObject
       LOTable table <- getElement stack rb :: IO LuaObject
+      table <- readIORef table
       let value = getTableElement table index
       traceShow(table, value, index) $
         fmap incPC $ updateStack state $ \s -> setElement s ra value
     SETTABLE -> do
-      value <- decodeConst rc
+      value <- decodeConst rc :: IO LuaObject
       LOTable table <- getElement stack ra
-      index <- decodeConst rb
-      let newTable = LOTable $ setTableElement table index value
+      index <- decodeConst rb :: IO LuaObject
+      modifyIORef' table (\t -> setTableElement t index value)
+      --let newTable = LOTable $ setTableElement table index value
       --traceShow (ra, table, newTable)
-      fmap incPC $ updateStack state $ \s -> setElement s ra newTable
+      return $ incPC state -- updateStack state $ \s -> setElement s ra newTable
     ADD -> do
       x <- ltoNumber <$> decodeConst rb
       y <- ltoNumber <$> decodeConst rc
@@ -229,10 +231,10 @@ execOP state = do
     VARARG ->
       incPC <$> updateStack state (\s -> updateVarArg s callInfo ra rb)
     SELF -> do
+      LOTable table <- getElement stack rb :: IO LuaObject --Reference to the table
       index <- decodeConst rc
-      table <- getElement stack rb
-      let callee = (\(LOTable t) -> getTableElement t index) table :: LuaObject
-      let update = (\s -> setElement s ra callee) . (\s -> setElement s (ra+1) table) :: (LuaStack s) => IO s -> IO s
+      callee <- do t <- readIORef table; return $ getTableElement t index :: IO LuaObject
+      let update = (\s -> setElement s ra callee) . (\s -> setElement s (ra+1) $ LOTable table) :: (LuaStack s) => IO s -> IO s
       incPC <$> updateStack state update
     LuaLoader.EQ -> do
       a <- decodeConst rb
@@ -287,17 +289,20 @@ execOP state = do
 
     TFORLOOP ->
       error "TFORLOOP Undefined"
-    NEWTABLE ->
-      incPC <$> updateStack state (\stack -> setElement stack ra $ LOTable createTable)
+    NEWTABLE -> do
+      tref <- newIORef createTable
+      incPC <$> updateStack state (\stack -> setElement stack ra $ LOTable tref)
     SETLIST -> do
       -- used to set an array of elements at once
-      table <- getElement stack ra
+      LOTable table <- getElement stack ra
+      oldTable <- readIORef table
       elementCount <- if rb > 0 then return rb else do s <- stackSize stack; return $ s - (ra + 1)
       elements <- getRange stack (ra+1) (ra+elementCount) :: IO [LuaObject]
       let index = if rc /= 0 then (rc - 1) * 50 + 1 else error "large indices not supported"
       let newPairs = zip (map (LONumber . fromIntegral) [index ..]) elements
-      let newTable = foldl (\(LOTable t) (k, v) -> LOTable $ setTableElement t k v) table newPairs
-      incPC <$> updateStack state (\s -> setElement s ra newTable)
+      let newTable = foldl (\t (k, v) -> setTableElement t k v) oldTable newPairs
+      writeIORef table newTable
+      return $ incPC state
     CALL -> runCall $ return state
     TAILCALL -> tailCall $ return state
     RETURN -> returnCall $ return state
