@@ -137,12 +137,12 @@ execOP state = do
 
   let instruction = getInstruction state
       opCode = LuaLoader.op instruction
-  putStrLn $ show (getPC state + 1) ++ ":" ++ ppLuaInstruction instruction
+  --putStrLn $ show (getPC state + 1) ++ ":" ++ ppLuaInstruction instruction
 
   case opCode of
     MOVE -> do -- RA = RB
       obj <- getElement stack rb
-      updateStack state (\s -> setElement s ra obj)
+      incPC <$> updateStack state (\s -> setElement s ra obj)
       --incPC <$> updateStack state (\stack ->setElement stack ra $ getElement stack rb)
     LOADNIL -> -- S[RA..RB] = nil
       incPC <$> updateStack state (\s -> setRange s ra $ LONil:Prelude.replicate (rb - ra) LONil)
@@ -480,7 +480,7 @@ returnCall state = do
 
 returnByOrigin :: IO LuaState -> LuaExecutionThread -> [LuaObject] -> IO LuaState
 --When returning to Haskell we only pass back the list of results
-returnByOrigin state (LuaExecInstanceTop undefined) results = do
+returnByOrigin state (LuaExecInstanceTop _) results = do
   --Trace.traceM "Returning to Haskell"
   globals <- Monad.liftM lGetGlobals state
   return $ LuaState (LuaExecInstanceTop results) globals
@@ -532,15 +532,15 @@ tailCall state = do
 
 
 concatOP :: (LuaStack a) => IO a -> Int -> Int -> IO LuaObject
-
-
 concatOP stack from to =
   case compare from to of
     Prelude.GT -> return $ LOString ""
     otherwise -> do
-      LOString start <- ltostring <$> getElement stack from :: IO LuaObject
-      LOString next <- concatOP stack (from+1) to
-      return . LOString $ start ++ next
+      x <- concat <$> mapM
+        (\i -> do e <- getElement stack i; return (init . loString $ ltoString e))
+        [from..to]
+
+      return $ LOString x -- $ traceShowId $ start ++ next
 
 
 printStack :: LuaState -> IO ()
@@ -569,4 +569,4 @@ stackWalk state = do
       ss <- stackSize stack
       Foldable.traverse_ (fmap print . getElement stack) [0..ss - 1]
       print "1-UP"
-      ps $ LVM.LuaState prevInst undefined
+      ps $ LVM.LuaState prevInst Map.empty

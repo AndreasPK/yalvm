@@ -33,6 +33,9 @@ runLuaCode path = do
   LVM.runLuaFunction $ return vm
   --traceM "ranLuaCode"
 
+testFile :: FilePath -> IO LVM.LuaState
+testFile p = runLuaCode $ "D:\\Uni\\00_SS2016\\90_AbsMachine\\yalvm\\test\\testFiles\\" ++ p
+
 
 file :: IO ByteString
 file = BS.readFile "luac.out"

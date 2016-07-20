@@ -100,7 +100,7 @@ ltoBool _ = LOBool True
 
 lLen :: LuaObject -> LuaObject
 lLen (LOString s) = LONumber $ fromIntegral $ length s
-lLen _ = LONumber undefined --in lua implemented via metamethods
+lLen _ = error "Length of objects other than String not implemented"
 
 ltoString :: LuaObject -> LuaObject
 ltoString LONil = LOString "nil"
@@ -108,7 +108,7 @@ ltoString (LOBool True) = LOString "true"
 ltoString (LOBool False) = LOString "false"
 ltoString (LONumber x) = LOString $ show x
 ltoString x@(LOString s) = x
-ltostring x = LOString $ show x
+ltoString x = error "Can't converto type to string"
 
 lgetFunctionHeader :: LuaObject -> LuaFunctionHeader
 lgetFunctionHeader = funcHeader . loFunction
