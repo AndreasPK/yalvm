@@ -83,7 +83,8 @@ stackWalk state = do
       mapM_ print res
     ps state = do
       let (LVM.LuaState (LuaExecutionThread LuaFunctionInstance { funcStack = stack } prevInst pc execState callInfo) globals) = state
-      ss <- stackSize stack
-      Foldable.traverse_ (fmap print . getElement stack) [0..ss - 1]
+      s <- stack
+      ss <- stackSize s
+      Foldable.traverse_ (fmap print . getElement s) [0..ss - 1]
       print "1-UP"
       ps $ LVM.LuaState prevInst undefined

@@ -4,7 +4,10 @@ module LuaObjects(module LuaObjects) where
 
 import qualified Data.Map.Strict as Map
 import qualified Data.IntMap.Strict as IntMap
-import qualified Data.Vector.Mutable as V
+import qualified Data.Vector.Mutable as MV
+import qualified Data.Vector as V
+import qualified Data.Vector.Unboxed as UV
+import qualified Data.Vector.Generic as GV
 import Control.Monad.ST as ST
 --import Control.Monad.ST.Lazy
 import Data.Primitive.Array
@@ -12,7 +15,7 @@ import Data.Maybe
 import Data.IORef
 import System.IO.Unsafe
 import qualified Data.Sequence as Sequence
-import Control.Monad
+import Control.Monad as Monad
 
 import LuaLoader
 import Parser as P
@@ -136,10 +139,10 @@ linstantiateFunction functionHeader@(LuaFunctionHeader name startLine endLine up
   functionInstance =
     LuaFunctionInstance
       (createStack $ fromIntegral stackSize )
-      ( (\(LuaInstructionList l ins) -> ins) instructions)
+      ( (\(LuaInstructionList l ins) -> UV.fromListN (fromIntegral l) ins) instructions)
       constList
       functionHeader
-      (LuaMap (Map.empty :: Map.Map Int LuaObject))
+      V.empty
       (LuaRTUpvalueList IntMap.empty)
       undefined --closure
   in
@@ -150,7 +153,7 @@ linstantiateFunction functionHeader@(LuaFunctionHeader name startLine endLine up
 -- lsetvarargs function arguments -> updatedFunction
 lsetvarargs :: LuaObject -> [LuaObject] -> LuaObject
 lsetvarargs (LOFunction func) parameters =
-  let varargs = LuaMap $ Map.fromList $ zip [0..] parameters
+  let varargs = V.fromList parameters
   in
   LOFunction (func {funcVarargs = varargs}) -- upvalues closure)
 
@@ -200,38 +203,74 @@ lpow (LONumber x) (LONumber y) = LONumber $ (**) x y
 -- | Lua Stack wrapper TODO: Performance optimization
 class LuaStack l where
   createStack :: Int -> IO l
-  setElement :: IO l -> Int -> LuaObject -> IO l
-  getElement :: IO l -> Int -> IO LuaObject
-  getRange :: IO l -> Int -> Int -> IO [LuaObject]--get elements stack[a..b]
-  setRange :: IO l -> Int -> [LuaObject] -> IO l --place given objects in stack starting at position p
-  stackSize :: IO l -> IO Int
-  setStackSize :: IO l -> Int -> IO l
-  pushObjects :: IO l -> [LuaObject] -> IO l
+  setElement :: l -> Int -> LuaObject -> IO l
+  getElement :: l -> Int -> IO LuaObject
+  getRange :: l -> Int -> Int -> IO [LuaObject]--get elements stack[a..b]
+  setRange :: l -> Int -> [LuaObject] -> IO l --place given objects in stack starting at position p
+  stackSize :: l -> IO Int
+  setStackSize :: l -> Int -> IO l
+  pushObjects :: l -> [LuaObject] -> IO l
   fromList :: [LuaObject] -> IO l
-  fromList = pushObjects (createStack 0)
-  shrink :: IO l -> Int -> IO l --shrink stack by x elements if possible
+  fromList objs = do s <- createStack 0; pushObjects s objs
+  shrink :: l -> Int -> IO l --shrink stack by x elements if possible
   shrink s x = do currentSize <- stackSize s; setStackSize s (currentSize - x)
-  toList :: IO l -> IO [LuaObject]
+  toList :: l -> IO [LuaObject]
   toList l = do count <- stackSize l; mapM (getElement l) [0..count -1]
-  setRange stack n objects = foldl (\s (k, v) -> setElement s k v) stack $ zip [n..] objects --requires stack to be at least (n - 1) in size
+  setRange stack n objects = foldM (\s (k, v) -> setElement s k v) stack $ zip [n..] objects --requires stack to be at least (n - 1) in size
+
+type LVStack = MV.IOVector LuaObject
+
+instance LuaStack LVStack where
+  createStack = MV.new
+  setElement stack i v = do MV.write stack i v; return stack
+  getElement = MV.read
+  getRange stack from to = mapM (MV.read stack) [from..to]
+  setRange stack start objects = do zipWithM_ (MV.write stack) [start..] objects; return stack
+  stackSize = return . MV.length
+  setStackSize stack size =
+    case compare (MV.length stack) size of
+      Prelude.EQ -> return stack
+      Prelude.LT -> do
+        let ss = MV.length stack
+        MV.grow stack $ size - ss
+      Prelude.GT -> return $ MV.slice 0 (size-1) stack
+  --grows stack accordingly
+  pushObjects stack objects = do
+    --grow the vector by the number of elements, then put them into the vector
+    let l = length objects
+    --s <- stack :: IO LVStack
+    ss <- stackSize stack
+    ns <- MV.grow stack l
+    setRange ns ss objects
+  fromList objects = do
+    stack <- MV.new $ length objects
+    setRange stack 0 objects
+  shrink stack by = do
+    --s <- stack
+    let newSize = MV.length stack - by
+    return $! MV.slice 0 newSize stack
+  toList stack =
+    --s <- stack
+    mapM (MV.read stack) [0.. MV.length stack -1]
+
 
 -- | Maps indexes to a lua object
 newtype LuaMap = LuaMap (Map.Map Int LuaObject) deriving (Eq, Show, Ord)
 
 instance LuaStack LuaMap where
-  setElement m pos obj = do LuaMap stack <- m; return . LuaMap $ Map.insert pos obj stack --m --LuaMap $ Map.insert pos obj stack
-  getElement m pos = do LuaMap stack <- m; return $ fromMaybe LONil $ Map.lookup pos stack
+  setElement m pos obj = undefined -- do let LuaMap stack = m; return . LuaMap $ Map.insert pos obj stack --m --LuaMap $ Map.insert pos obj stack
+  getElement m pos = undefined --do LuaMap stack <- m; return $ fromMaybe LONil $ Map.lookup pos stack
   createStack size = return $ LuaMap $ Map.fromAscList $ zip [0..size-1] $ repeat LONil
-  stackSize m = do LuaMap stack <- m; return $ Map.size stack
+  stackSize m = let (LuaMap stack) = m in return $ Map.size stack
   getRange stack lb rb = mapM (getElement stack :: Int -> IO LuaObject) [lb .. rb]
   setStackSize m size = do
-    LuaMap stack <- m
+    let LuaMap stack = m
     case compare (Map.size stack) size of
-      Prelude.EQ -> m
+      Prelude.EQ -> return m
       GT -> return $ LuaMap $ fst $ Map.split size stack
       Prelude.LT -> return $ LuaMap $ Map.union stack $ Map.fromAscList $ zip [Map.size stack .. (size-1)] $ repeat LONil
   pushObjects m objects = do
-    LuaMap stack <- m
+    let LuaMap stack = m
     let size = Map.size stack
     return $ LuaMap $ Map.union stack $
       Map.fromAscList $ zip [size..] objects
@@ -299,10 +338,10 @@ type LuaParameterList = [LuaObject]
 data LuaFunctionInstance =
   LuaFunctionInstance
   { funcStack :: IO LuaMap -- Stack
-  , funcInstructions :: ![LuaInstruction] --List of op codes
+  , funcInstructions :: !(UV.Vector LuaInstruction) --List of op codes
   , funcConstants :: !LuaConstList --List of constants
   , funcHeader :: !LuaFunctionHeader --Function prototypes
-  , funcVarargs :: !LuaMap --ArgumentList for varargs, starting with index 0
+  , funcVarargs :: !(V.Vector LuaObject) --ArgumentList for varargs, starting with index 0
   , funcUpvalues :: !LuaRTUpvalueList --Upvalues missing
   , funcClosure :: LuaClosure --ToDo
   }
@@ -352,7 +391,7 @@ data LuaExecutionThread =
 
 -- | Contains information about arguments passed to the function
 data LuaCallInfo = LuaCallInfo
-  [LuaObject]
+  { lciParams :: [LuaObject] }
   deriving(Show, Eq, Ord)
 
 callInfo :: [LuaObject] -> LuaCallInfo

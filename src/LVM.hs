@@ -18,6 +18,10 @@ import Control.Exception.Base
 import Data.Function
 import qualified Data.Traversable as Traversable
 import qualified Data.Foldable as Foldable
+import qualified Data.Vector.Unboxed as UV
+import qualified Data.Vector.Mutable as MV
+import qualified Data.Vector as V
+
 
 type LuaGlobals = Map.Map String LuaObject
 
@@ -63,11 +67,11 @@ lGetGlobals (LuaState _ globals) = globals
 
 
 -- | Applies the given function to the Lua stack
-updateStack :: LuaState -> (IO LuaMap -> IO LuaMap) -> IO LuaState
+updateStack :: LuaState -> (LuaMap -> IO LuaMap) -> IO LuaState
 updateStack state f =
   let exec = stateExecutionThread state
       func = execFunctionInstance exec
-      stack = f $ funcStack func :: IO LuaMap
+      stack = Monad.join $ f <$> funcStack func :: IO LuaMap
   in
   return $ state { stateExecutionThread = exec { execFunctionInstance = func { funcStack = stack }}}
 
@@ -78,7 +82,7 @@ getInstruction state  = --(LuaState (LuaExecutionThread (LuaFunctionInstance _ i
   let exec = stateExecutionThread state
       pos = execCurrentPC exec
   in
-  (funcInstructions . execFunctionInstance) exec !! pos
+  (funcInstructions . execFunctionInstance) exec UV.! pos
   -- instructions !! pc
 
 --get the instruction at pc + offset
@@ -86,7 +90,7 @@ getRelativeInstruction :: LuaState -> Int -> LuaInstruction
 getRelativeInstruction state offset =
   let func = execFunctionInstance . stateExecutionThread $ state
   in
-  (funcInstructions func !! (getPC state + offset))
+  (funcInstructions func UV.! (getPC state + offset))
 
 
 -- | Program counter manipulation
@@ -121,7 +125,7 @@ execOP state = do
   --Variables for easier writing of op code functions
   state@(LuaState executionThread@(LuaExecutionThread functionInst prevInst pc execState callInfo) globals) <- state
   let  LuaFunctionInstance stack instructions constList funcPrototype varargs upvalues _ = functionInst
-       nextInstruction = instructions !! pc
+       nextInstruction = instructions UV.! pc
        opCode = LuaLoader.op nextInstruction :: LuaOPCode
        ra = LuaLoader.ra nextInstruction :: Int
        rb = LuaLoader.rb nextInstruction
@@ -129,8 +133,10 @@ execOP state = do
        rbx = LuaLoader.rbx nextInstruction
        rsbx = LuaLoader.rsbx nextInstruction
 
+  stack <- stack --Extract the stack out of the io monad
+
        --For K enccoding bit 9 deternines if we use a constant or a stack value
-       decodeConst :: Int -> IO LuaObject
+  let  decodeConst :: Int -> IO LuaObject
        decodeConst register = if (register Bits..&. 256) == 256 then
          return (getConst constList (register - 256)) else
            getElement stack register
@@ -168,9 +174,9 @@ execOP state = do
       in
       incPC <$> updateStack state (\s -> setElement s ra value)
     SETUPVAL ->
-      let value = getElement stack ra
-          newUpvalues = error "Set upvalue" -- setUpvalue upvalues rb value
-      in
+      --let value = getElement stack ra
+      --    newUpvalues = error "Set upvalue" -- setUpvalue upvalues rb value
+      --in
       error "Set upvalue"
     GETTABLE -> do
       index <- decodeConst rc :: IO LuaObject
@@ -213,7 +219,7 @@ execOP state = do
       incPC <$> updateStack state (\s -> setElement s ra $ lpow x y)
     UNM -> do
       LONumber x <- ltoNumber <$> getElement stack rb
-      incPC <$> updateStack state (\s -> setElement stack ra (LONumber (-x)))
+      incPC <$> updateStack state (\s -> setElement s ra (LONumber (-x)))
     NOT -> do
       LOBool value <- ltoBool <$> getElement stack rb --Convert RB to boolean value
       let raVal = if value then LOBool False else LOBool True --invert value
@@ -234,7 +240,9 @@ execOP state = do
       LOTable table <- getElement stack rb :: IO LuaObject --Reference to the table
       index <- decodeConst rc
       callee <- do t <- readIORef table; return $ getTableElement t index :: IO LuaObject
-      let update = (\s -> setElement s ra callee) . (\s -> setElement s (ra+1) $ LOTable table) :: (LuaStack s) => IO s -> IO s
+      let setCallee = (\s -> setElement s ra callee) :: LuaMap -> IO LuaMap
+      let setTable = (\s -> setElement s (ra+1) $ LOTable table) :: LuaMap -> IO LuaMap
+      let update s = Monad.join $ setCallee <$> setTable s
       incPC <$> updateStack state update
     LuaLoader.EQ -> do
       a <- decodeConst rb
@@ -314,10 +322,17 @@ compBtoI :: Bool -> Int -> Bool
 compBtoI b i = b && i > 0 || not b && i == 0
 
 --copies values from vararg list to the stack, might update top of stack
-updateVarArg :: (LuaStack a) => IO a -> LuaCallInfo -> Int -> Int -> IO a
+updateVarArg :: (LuaStack a) => a -> LuaCallInfo -> Int -> Int -> IO a
 updateVarArg stack (LuaCallInfo varargs) offset countIndicator
-  | countIndicator == 0 = foldl (\s (k, v) -> setElement s k v) stack $ zip [offset .. ] varargs
-  | countIndicator > 1 = foldl (\s (k, v) -> setElement s k v) stack $ zip [offset .. (offset + countIndicator - 2)] varargs
+  | countIndicator == 0 = do
+      stackSize <- stackSize stack --maximum size of stack
+      let argCount = length varargs
+      let requiredSize = offset + argCount - 1
+      stack <- if stackSize <= requiredSize then return stack else setStackSize stack $ requiredSize - stackSize
+      Monad.zipWithM_ (setElement stack) [offset..] varargs
+      return stack
+      --foldl (\s (k, v) -> setElement s k v) stack $ zip [offset .. ] varargs
+  | countIndicator > 1 = do Monad.zipWithM_ (setElement stack) [offset..] varargs; return stack --foldl (\s (k, v) -> setElement s k v) stack $ zip [offset .. (offset + countIndicator - 2)] varargs
 
 --create a new closure
 execCLOSURE :: LuaState -> Int -> Int -> IO LuaState
@@ -345,12 +360,11 @@ runLuaFunction state = do
 
 --if the current instruction is a call instruction return the function to be called
 getCallee :: LuaState -> IO LuaObject
-getCallee state =
+getCallee state = do
   let inst = getInstruction state
       ra = LVM.ra inst
-      stack = lGetStateStack state
-      callee = getElement stack ra
-  in callee
+  stack <- lGetStateStack state
+  getElement stack ra
 
 isLuaCall :: LuaState -> IO Bool
 isLuaCall state = do
@@ -387,7 +401,7 @@ getCallArguments :: LuaState -> IO (LuaObject, [LuaObject])
 getCallArguments state = do
   let callInst = getInstruction state -- Call instruction
       calleePosition = LVM.ra callInst
-      stack = lGetStateStack state
+  stack <- lGetStateStack state
   parameters <- collectValues (calleePosition +1) (LVM.rb callInst) stack
   callee <- getCallee state
   return (callee, parameters)
@@ -405,7 +419,7 @@ runHaskellCall state = do
   let stackUpdate s = shrink s $ length parameters
   state <- (`updateStack` stackUpdate) <$> state
 
-  rlist <- toList $ return results :: IO [LuaObject]
+  rlist <- toList results :: IO [LuaObject]
 
   returnFromHaskell state rlist
 
@@ -441,17 +455,19 @@ runLuaCall state = do
   --split arguments in fixed args and varargs
   let (fixedArguments, varArgs) = splitAt maxArgCount parameters :: ([LuaObject], [LuaObject])
 
-  let calleeStack = flip setStackSize maxArgCount $ pushObjects (createStack 0) fixedArguments
+  calleeStack <- createStack maxArgCount :: IO LuaMap
+  calleeStack <-setRange calleeStack maxArgCount fixedArguments  -- setStackSize maxArgCount $ pushObjects (createStack 0) fixedArguments
   let newExecutionThread = LuaExecutionThread calleeInstance oldExecutionThread 0 LuaStateRunning (LuaCallInfo varArgs)
 
   ---call resulting function
-  flip updateStack (const calleeStack) $ LuaState newExecutionThread $ lGetGlobals state
+  let newState = LuaState newExecutionThread $ lGetGlobals state
+  updateStack newState (return . const calleeStack)
 
 
 
 -- Collects the number of parameters given by rb in the call instruction
 -- offset gives the position of the first parameter, rb the expected parameter count
-collectValues :: (LuaStack a) => Int -> Int -> IO a -> IO [LuaObject]
+collectValues :: (LuaStack a) => Int -> Int -> a -> IO [LuaObject]
 collectValues offset rbCount stack
   | rbCount == 1 = return []
   | rbCount > 1 = getRange stack offset (offset + rbCount -2)
@@ -471,7 +487,7 @@ returnCall state = do
   returnInstruction <- fmap getInstruction state
 
   --collect results
-  let stack = Monad.join $ fmap lGetStateStack state :: IO LuaMap
+  stack <- Monad.join $ fmap lGetStateStack state :: IO LuaMap
   results <- collectValues (LVM.ra returnInstruction) (LVM.rb returnInstruction) stack :: IO [LuaObject]
   --traceM $ "Results:" ++ show results
 
@@ -526,17 +542,17 @@ tailCall state = do
   --collect  parameters
   let maxArgCount = lgetArgCount lof :: Int
   let (fixedArgs, varArgs) = splitAt maxArgCount parameters
-  let newStack = flip setStackSize newStackSize $ flip pushObjects fixedArgs $ createStack 0
+  newStack <- fromList fixedArgs :: IO LuaMap --Monad.join $ flip setStackSize newStackSize $ flip pushObjects fixedArgs $ createStack 0 :: IO LuaMap
 
   prevExecInst <- fmap lGetLastFrame state
   globals <- fmap lGetGlobals state
   let newState = LuaState (LuaExecutionThread calledFunction prevExecInst 0 LuaStateRunning (LuaCallInfo varArgs)) globals
 
   --updateStack fails here
-  updateStack newState $ const newStack
+  updateStack newState $ return . const newStack
 
 
-concatOP :: (LuaStack a) => IO a -> Int -> Int -> IO LuaObject
+concatOP :: (LuaStack a) => a -> Int -> Int -> IO LuaObject
 concatOP stack from to =
   case compare from to of
     Prelude.GT -> return $ LOString ""
@@ -557,7 +573,7 @@ printStack state = do
     ps (LuaState (LuaExecInstanceTop res) _) =
       mapM_ print res
     ps state = do
-      let (LuaState (LuaExecutionThread LuaFunctionInstance {funcStack =  stack} prevInst pc execState callInfo) globals) = state
+      stack <- lGetStateStack state --let (LuaState (LuaExecutionThread LuaFunctionInstance {funcStack = stack} prevInst pc execState callInfo) globals) = state
       ss <- stackSize stack
       Foldable.traverse_ (\n -> do e <- getElement stack n; print e) [0..ss - 1]
 
@@ -570,7 +586,8 @@ stackWalk state = do
     ps (LVM.LuaState (LuaObjects.LuaExecInstanceTop res) _) =
       mapM_ print res
     ps state = do
-      let (LVM.LuaState (LuaExecutionThread LuaFunctionInstance {funcStack = stack } prevInst pc execState callInfo) globals) = state
+      stack <- lGetStateStack state --let (LVM.LuaState (LuaExecutionThread LuaFunctionInstance {funcStack = stack } prevInst pc execState callInfo) globals) = state
+      let prevInst = execPrevInst $ stateExecutionThread state
       ss <- stackSize stack
       Foldable.traverse_ (fmap print . getElement stack) [0..ss - 1]
       print "1-UP"

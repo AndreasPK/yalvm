@@ -26,7 +26,8 @@ registerAll s = registerFunction s definePrint "print"
 
 definePrint :: (LuaStack stack) => IO stack -> IO LuaMap
 definePrint arguments = do
-  al <- toList arguments :: IO [LuaObject]
+  uwa <- arguments
+  al <- toList uwa :: IO [LuaObject]
   Foldable.traverse_ (print . loString . ltoString) al
   createStack 1
 
