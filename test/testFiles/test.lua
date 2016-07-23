@@ -1,13 +1,20 @@
-x = {}
-
-x[1]=1
-
+--calculate factorial
 function f(x)
-  x[1] = 0
+  return 10
 end
 
-f(x)
+--i = 5
+--local y = 1
+x = f(5)
+print(x)
 
-print(x[1])
+--print(nil)
+--for i=1,10 do
+--  local x = fac(i)--print(fac(i))
+--  print(x)
+--end
 
-return (5)
+--returns 120
+--return fac(5)
+
+return

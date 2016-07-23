@@ -20,6 +20,7 @@ import Control.Monad as Monad
 import LuaLoader
 import Parser as P
 import Debug.Trace
+import Control.Exception.Base
 
 data LuaObject = LONil | LONumber { lvNumber :: !Double} | LOString { loString :: !String} | LOTable !(IORef LTable) |
   LOFunction { loFunction :: LuaFunctionInstance} | LOBool Bool | LOUserData {-TODO-} | LOThread {-TODO-}
@@ -100,7 +101,10 @@ isNil o
 ltoNumber :: LuaObject -> LuaObject
 ltoNumber n@(LONumber _) = n
 ltoNumber (LOString s) = LONumber $ read s
-ltoNumber x = error $ "Can't convert " ++ show x ++ " to number"
+ltoNumber x = error $ unsafePerformIO $ do
+  print "ltoNumber: Can't convert to number"
+  print x
+  return "toNumber conversion error"
 
 ltoBool :: LuaObject -> LuaObject
 ltoBool LONil = LOBool True
@@ -117,7 +121,11 @@ ltoString (LOBool True) = LOString "true"
 ltoString (LOBool False) = LOString "false"
 ltoString (LONumber x) = LOString $ show x
 ltoString x@(LOString s) = x
-ltoString x = error "Can't converto type to string"
+ltoString x = error $ unsafePerformIO $ do
+  putStrLn "Error:Can't convert type to string"
+  print x
+  return "Conversion error"
+
 
 lgetFunctionHeader :: LuaObject -> LuaFunctionHeader
 lgetFunctionHeader = funcHeader . loFunction
@@ -138,8 +146,12 @@ linstantiateFunction functionHeader@(LuaFunctionHeader name startLine endLine up
   let
   functionInstance =
     LuaFunctionInstance
-      (createStack $ fromIntegral stackSize )
-      ( (\(LuaInstructionList l ins) -> UV.fromListN (fromIntegral l) ins) instructions)
+      (do
+        let ss = fromIntegral stackSize
+        s <- createStack ss;
+        setRange s 0 $ replicate ss LONil
+      )
+      ( (\(LuaInstructionList l ins) -> V.fromListN (fromIntegral l) ins) instructions)
       constList
       functionHeader
       V.empty
@@ -220,8 +232,11 @@ class LuaStack l where
 
 type LVStack = MV.IOVector LuaObject
 
+instance Show LVStack where
+  show x = "LVStack (Show Not implemented)" --unsafePerformIO $ do ss <- stackSize x; show <$> mapM  (getElement x) [0 .. ss] --"LVStack [not implemented]"
+
 instance LuaStack LVStack where
-  createStack = MV.new
+  createStack size = MV.replicate size LONil
   setElement stack i v = do MV.write stack i v; return stack
   getElement = MV.read
   getRange stack from to = mapM (MV.read stack) [from..to]
@@ -253,6 +268,9 @@ instance LuaStack LVStack where
     --s <- stack
     mapM (MV.read stack) [0.. MV.length stack -1]
 
+instance Show (IO LVStack) where
+  show s = unsafePerformIO $ do s <- s; return $ show s
+
 
 -- | Maps indexes to a lua object
 newtype LuaMap = LuaMap (Map.Map Int LuaObject) deriving (Eq, Show, Ord)
@@ -274,8 +292,6 @@ instance LuaStack LuaMap where
     let size = Map.size stack
     return $ LuaMap $ Map.union stack $
       Map.fromAscList $ zip [size..] objects
-
-newtype LuaSeq = LuaSeq (Sequence.Seq LuaRef) deriving (Eq, Show, Ord)
 
 -- | the runtime value of a upvalue
 data LuaRuntimUpvalue =
@@ -337,8 +353,8 @@ type LuaParameterList = [LuaObject]
 -- LuaFunctionInstance stack instructions constants funcPrototypes upvalues arguments
 data LuaFunctionInstance =
   LuaFunctionInstance
-  { funcStack :: IO LuaMap -- Stack
-  , funcInstructions :: !(UV.Vector LuaInstruction) --List of op codes
+  { funcStack :: !(IO LVStack) -- Stack
+  , funcInstructions :: !(V.Vector LuaInstruction) --List of op codes
   , funcConstants :: !LuaConstList --List of constants
   , funcHeader :: !LuaFunctionHeader --Function prototypes
   , funcVarargs :: !(V.Vector LuaObject) --ArgumentList for varargs, starting with index 0
@@ -348,8 +364,8 @@ data LuaFunctionInstance =
   |
   HaskellFunctionInstance
   { funcName :: !String --name
-  , funcStack :: IO LuaMap --Stack
-  , funcFunc ::  IO LuaMap -> IO LuaMap
+  , funcStack :: !(IO LVStack) --Stack
+  , funcFunc ::  IO LVStack -> IO LVStack
   }
   deriving ()
 

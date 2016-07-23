@@ -27,7 +27,7 @@ class CLuaInstruction i where
 
 instance CLuaInstruction Word32 where
   op w = toEnum $ fromIntegral $ w .&. (2^6-1 :: Word32)
-  ra w = fromIntegral $ shiftR w 6 .&. (2^8-1 :: Word32)
+  ra w = fromIntegral $! shiftR w 6 .&. (2^8-1 :: Word32)
   rc w = fromIntegral $ shiftR w 14 .&. (2^9-1 :: Word32)
   rb w = fromIntegral $ shiftR w 23 .&. (2^9-1 :: Word32)
   rbx w = fromIntegral $ shiftR w 14 .&. (2^18-1 :: Word32)
