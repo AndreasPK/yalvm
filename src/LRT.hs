@@ -17,20 +17,19 @@ setGlobal (LuaState exec globals) key value =
   LuaState exec $ Map.insert name value globals
 
 
-registerFunction :: LuaState -> (IO LVStack -> IO LVStack) -> String -> LuaState
-registerFunction state f name = setGlobal state name $ LOFunction $ HaskellFunctionInstance name (createStack 0) f
+registerFunction :: LuaState -> (LVStack -> IO LVStack) -> String -> LuaState
+registerFunction state f name = setGlobal state name $ LOFunction $ HaskellFunctionInstance name f
 
 
 registerAll :: LuaState -> LuaState
 registerAll s = registerFunction s definePrint "print"
 
 
-definePrint :: (LuaStack stack) => IO stack -> IO LVStack
+definePrint :: (LuaStack stack) => stack -> IO LVStack
 definePrint arguments = do
-  uwa <- arguments
-  al <- toList uwa :: IO [LuaObject]
+  al <- toList arguments :: IO [LuaObject]
   --print al
   Foldable.traverse_ (putStrLn . loString . ltoString) al
   createStack 1
 
-lrtPrint = HaskellFunctionInstance "print" (createStack 0) definePrint
+lrtPrint = HaskellFunctionInstance "print" definePrint

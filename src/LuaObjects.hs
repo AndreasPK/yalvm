@@ -22,8 +22,8 @@ import Parser as P
 import Debug.Trace
 import Control.Exception.Base
 
-data LuaObject = LONil | LONumber { lvNumber :: !Double} | LOString { loString :: !String} | LOTable !(IORef LTable) |
-  LOFunction { loFunction :: LuaFunctionInstance} | LOBool Bool | LOUserData {-TODO-} | LOThread {-TODO-}
+data LuaObject = LONil | LONumber { lvNumber :: {-# UNPACK #-} !Double} | LOString { loString :: !String} | LOTable !(IORef LTable) |
+  LOFunction { loFunction :: !LuaFunctionInstance} | LOBool !Bool | LOUserData {-TODO-} | LOThread {-TODO-}
   deriving (Eq, Show, Ord)
 
 type LuaRef = IORef LuaObject
@@ -139,26 +139,22 @@ lgetPrototype (LOFunction func@(LuaFunctionInstance stack instructions constList
   --functionList !! pos
 
 -- | Create a function instance based on prototype, doesn't set up passed parameters/upvalues/varargs
-linstantiateFunction :: LuaFunctionHeader -> LuaObject
+linstantiateFunction :: LuaFunctionHeader -> IO LuaObject
 linstantiateFunction functionHeader@(LuaFunctionHeader name startLine endLine upvalueCount
   parameterCount varargFlag stackSize instructions constList functionList
-  instPosList localList upvalueList ) =
-  let
-  functionInstance =
-    LuaFunctionInstance
-      (do
-        let ss = fromIntegral stackSize
-        s <- createStack ss;
-        setRange s 0 $ replicate ss LONil
-      )
-      ( (\(LuaInstructionList l ins) -> V.fromListN (fromIntegral l) ins) instructions)
-      constList
-      functionHeader
-      V.empty
-      (LuaRTUpvalueList IntMap.empty)
-      undefined --closure
-  in
-  LOFunction functionInstance
+  instPosList localList upvalueList ) = do
+    functionInstance <- fmap
+      (\stack ->
+        LuaFunctionInstance
+          stack
+          ( (\(LuaInstructionList l ins) -> V.fromListN (fromIntegral l) ins) instructions)
+          constList
+          functionHeader
+          V.empty
+          (LuaRTUpvalueList IntMap.empty)
+          undefined --closure
+      ) $ createStack $ fromIntegral stackSize
+    return $ LOFunction functionInstance
 
 
 -- | Set the variable argument list based on the given list of values
@@ -316,36 +312,6 @@ data ClosureRef = StackRef !Int | ClosedRef !LuaObject deriving (Eq, Show)
 
 
 
-{-
-
-    execFunctionInstance :: !LuaFunctionInstance,
-    execPrevInst :: !LuaExecutionThread,
-    execCurrentPC :: !Int,
-    execRunningState :: !LuaExecutionState,
-    execCallInfo :: !LuaCallInfo }
-
-
-
-dereferenceUpvalue :: LuaRuntimUpvalue -> LuaObject
-dereferenceUpvalue (LRTUpvalueValue x) = x
-dereferenceUpvalue (LRTUpvalueReference m i) = getElement m i
-dereferenceUpvalue (LRTUpvalueUpvalue (LuaRTUpvalueList upvalList) pos) = dereferenceUpvalue $ upvalList IntMap.! pos
-
-updateUpvalue :: LuaObject -> LuaRuntimUpvalue -> LuaRuntimUpvalue
-updateUpvalue obj (LRTUpvalueReference m i)  = LRTUpvalueReference (setElement m i obj) i
-updateUpvalue obj _  = LRTUpvalueValue obj
-
-getUpvalue :: LuaRTUpvalueList -> Int -> LuaObject
-getUpvalue (LuaRTUpvalueList m) i = fromMaybe LONil (dereferenceUpvalue <$> IntMap.lookup i m :: Maybe LuaObject)
-
-setUpvalue :: LuaRTUpvalueList -> Int -> LuaObject -> LuaRTUpvalueList
-setUpvalue (LuaRTUpvalueList m) i obj =
-  let oldValue = fromJust $ IntMap.lookup i m :: LuaRuntimUpvalue
-  in
-  LuaRTUpvalueList $ IntMap.adjust (updateUpvalue obj) i m
-
--}
-
 type LuaParameterList = [LuaObject]
 
 
@@ -353,7 +319,7 @@ type LuaParameterList = [LuaObject]
 -- LuaFunctionInstance stack instructions constants funcPrototypes upvalues arguments
 data LuaFunctionInstance =
   LuaFunctionInstance
-  { funcStack :: !(IO LVStack) -- Stack
+  { funcStack :: !LVStack -- Stack
   , funcInstructions :: !(V.Vector LuaInstruction) --List of op codes
   , funcConstants :: !LuaConstList --List of constants
   , funcHeader :: !LuaFunctionHeader --Function prototypes
@@ -364,8 +330,7 @@ data LuaFunctionInstance =
   |
   HaskellFunctionInstance
   { funcName :: !String --name
-  , funcStack :: !(IO LVStack) --Stack
-  , funcFunc ::  IO LVStack -> IO LVStack
+  , funcFunc ::  LVStack -> IO LVStack
   }
   deriving ()
 
@@ -381,7 +346,7 @@ instance Show (IO LuaMap) where
     return $ show m
 
 instance Show LuaFunctionInstance where
-  show (HaskellFunctionInstance name _ _) = "(HaskellFunction: " ++ name ++ ")"
+  show (HaskellFunctionInstance name _) = "(HaskellFunction: " ++ name ++ ")"
   show (LuaFunctionInstance stack _ constList fh varargs upvalues _) = "(Lua Function: " ++ show (stack, constList, fh, varargs, upvalues) ++ ")"
 
 -- | Get line at which instruction was defined
@@ -407,7 +372,7 @@ data LuaExecutionThread =
 
 -- | Contains information about arguments passed to the function
 data LuaCallInfo = LuaCallInfo
-  { lciParams :: [LuaObject] }
+  { lciParams :: ![LuaObject] }
   deriving(Show, Eq, Ord)
 
 callInfo :: [LuaObject] -> LuaCallInfo
