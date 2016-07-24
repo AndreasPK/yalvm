@@ -28,9 +28,9 @@ runLuaCode path = do
   let chunk = either (error "Failed to parse binary file") id $ LuaLoader.loadLua fileContent -- :: IO (Either String Parser.LuaBinaryFile)
   vm <- LVM.startExecution $ Parser.getTopFunction chunk :: IO LVM.LuaState
   --traceM "vc"
-  vm <- return $ LRT.registerAll vm
+  LRT.registerAll vm
   --traceM "Run chunk"
-  LVM.runLuaFunction $ return vm
+  LVM.runLuaFunction vm
   --traceM "ranLuaCode"
 
 testFile :: FilePath -> IO LVM.LuaState
@@ -44,7 +44,7 @@ luaChunk :: IO Parser.LuaBinaryFile
 luaChunk = do
   x <- file
   let res = PBS.parseOnly Parser.loadLuaChunk x :: Either String Parser.LuaBinaryFile
-  let luaChunk = either (const undefined) id res :: Parser.LuaBinaryFile
+  let luaChunk = either (error "Parse error") id res :: Parser.LuaBinaryFile
   return luaChunk
 
 main :: IO ()
@@ -75,15 +75,10 @@ main = do
   -- BS8.putStrLn x
 
 stackWalk :: LVM.LuaState -> IO ()
-stackWalk state = do
-  ps state
-  return ()
-  where
-    ps (LVM.LuaState (LuaObjects.LuaExecInstanceTop res) _) =
-      mapM_ print res
-    ps state = do
-      let (LVM.LuaState (LuaExecutionThread LuaFunctionInstance { funcStack = stack } prevInst pc execState callInfo) globals) = state
+stackWalk state =
+  Monad.unless (1 == (execStop . LVM.stateExecutionThread) state) $ do
+      let stack = LVM.lGetStateStack state
       ss <- stackSize stack
       Foldable.traverse_ (fmap print . getElement stack) [0..ss - 1]
       print "1-UP"
-      ps $ LVM.LuaState prevInst undefined
+      stackWalk $ LVM.LuaState (execPrevInst . LVM.stateExecutionThread $ state) undefined
