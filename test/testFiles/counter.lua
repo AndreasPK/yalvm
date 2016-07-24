@@ -1,8 +1,9 @@
 local x = 0
-for j = 1, 30 do
-  x = 0
-  for i = 1, 1000000 do
+for j = 1, 7 do
+  local x = 0
+  for i = 1, 2100000 do
     x = x + i
   end
-  print(x)
+  local y = x
+  --print(y)
 end

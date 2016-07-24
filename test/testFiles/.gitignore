@@ -1,2 +1,6 @@
 *.luac
 *.listing
+*.prof*
+*.prof
+*.hp
+*.svg

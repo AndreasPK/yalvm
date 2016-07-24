@@ -1,12 +1,17 @@
 --calculate factorial
-function f(x)
-  return 10
+for i=0,1000000000 do
+  x = 1
 end
+
+for i=0,1000000000 do
+end
+
+for i=0,1000000000 do
+end
+
 
 --i = 5
 --local y = 1
-x = f(5)
-print(x)
 
 --print(nil)
 --for i=1,10 do
@@ -17,4 +22,4 @@ print(x)
 --returns 120
 --return fac(5)
 
-return
+return (5)

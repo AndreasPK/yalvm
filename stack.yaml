@@ -1,14 +1,15 @@
 # For more information, see: http://docs.haskellstack.org/en/stable/yaml_configuration.html
 
 # Specifies the GHC version and set of packages available (e.g., lts-3.5, nightly-2015-09-21, ghc-7.10.2)
-resolver: lts-5.8
+resolver: lts-6.8 #nightly-2016-07-19
+#resolver: nightly-2016-07-19
 
 # Local packages, usually specified by relative directory name
 packages:
 - '.'
 
 # Packages to be pulled from upstream that are not in the resolver (e.g., acme-missiles-0.3)
-extra-deps: [attoparsec-binary-0.2]
+extra-deps: [attoparsec-binary-0.2,floatshow-0.2.4]
 
 # Override default flag values for local packages and extra-deps
 flags: {}
@@ -16,6 +17,9 @@ flags: {}
 # Extra package databases containing global packages
 extra-package-dbs: []
 
+build:
+  library-profiling: true
+  executable-profiling: true
 # Control whether we use the GHC we find on the path
 # system-ghc: true
 
