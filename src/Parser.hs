@@ -1,3 +1,4 @@
+
 module Parser(
   loadLuaChunk, LuaBinaryFile(..), LuaString(..), LuaHeader(..), LuaFunctionHeader(..),
   LuaInstructionList(..), LuaConst(..), LuaConstList(..), LuaFunctionList(..),
@@ -12,6 +13,8 @@ import Data.ByteString.Char8 as B8
 import qualified Data.Bits as Bits
 import Data.Binary.IEEE754
 import Debug.Trace
+import Data.Vector.Unboxed as VU
+import Data.Vector as V
 
 
 luaHeaderDefinition :: ByteString
@@ -114,14 +117,14 @@ luaFunctionHeader = do
       parameterCount varargFlag maxStackSize instList constList functionList
       linePositions localList upvalues
 
-data LuaInstructionList = LuaInstructionList Word32 [Word32] deriving (Eq, Show, Ord)
+data LuaInstructionList = LuaInstructionList { lilLength :: Word32, lilInstructions :: !(VU.Vector Word32) } deriving (Eq, Show, Ord)
 
 luaInstructionList :: PBS.Parser LuaInstructionList
 luaInstructionList =
   do
   size <- anyWord32le
   instructions <- PBS.count (fromIntegral size) anyWord32le
-  return $ LuaInstructionList size instructions
+  return $ LuaInstructionList size $ VU.fromList instructions
   PBS.<?> "InstructionList"
 
 data LuaConst = LuaNil |
@@ -130,13 +133,13 @@ data LuaConst = LuaNil |
   LuaConstString LuaString
   deriving (Eq, Show, Ord)
 
-data LuaConstList = LuaConstList Word32 [LuaConst] deriving (Eq, Show, Ord)
+data LuaConstList = LuaConstList Word32 !(V.Vector LuaConst) deriving (Eq, Show, Ord)
 
 luaConstList :: PBS.Parser LuaConstList
 luaConstList = do
   x <- anyWord32le
   y <- PBS.count (fromIntegral x) luaConst
-  return $ LuaConstList x y
+  return $ LuaConstList x $! V.fromList y
   PBS.<?> "ConstList"
 
 luaConst :: PBS.Parser LuaConst

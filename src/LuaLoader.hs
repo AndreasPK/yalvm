@@ -7,6 +7,7 @@ import Data.ByteString as B
 import Data.ByteString.Char8 as B8
 import Data.Bits as Bits
 import Parser
+import qualified Data.Vector.Unboxed as VU
 
 type LuaInstruction = Word32
 
@@ -26,20 +27,20 @@ class CLuaInstruction i where
   create :: (LuaOPCode, Int, Int, Int) -> i
 
 instance CLuaInstruction Word32 where
-  op w = toEnum $ fromIntegral $ w .&. (2^6-1 :: Word32)
+  op w = toEnum $! fromIntegral $ w .&. (2^6-1 :: Word32)
   ra w = fromIntegral $! shiftR w 6 .&. (2^8-1 :: Word32)
-  rc w = fromIntegral $ shiftR w 14 .&. (2^9-1 :: Word32)
-  rb w = fromIntegral $ shiftR w 23 .&. (2^9-1 :: Word32)
-  rbx w = fromIntegral $ shiftR w 14 .&. (2^18-1 :: Word32)
+  rc w = fromIntegral $! shiftR w 14 .&. (2^9-1 :: Word32)
+  rb w = fromIntegral $! shiftR w 23 .&. (2^9-1 :: Word32)
+  rbx w = fromIntegral $! shiftR w 14 .&. (2^18-1 :: Word32)
   rsbx w = rbx w - 131071
-  create (op, ra, rb, rc) = fromIntegral $
+  create (op, ra, rb, rc) = fromIntegral $!
     fromEnum op +
     shiftL ra 6 +
     shiftL rc 14 +
     shiftL rb 23
 
-getFunctionInstructions :: LuaFunctionHeader -> [LuaInstruction]
-getFunctionInstructions (LuaFunctionHeader _ _ _ _ _ _ _ (LuaInstructionList _ instructions) _ _ _ _ _) = instructions
+getFunctionInstructions :: LuaFunctionHeader -> VU.Vector LuaInstruction
+getFunctionInstructions = lilInstructions . fhInstructions
 
 -- | decodeLuaInstruction instruction -> (opCode, RA, RB, RC, Bx, sBx)
 decodeLuaInstruction :: LuaInstruction -> (LuaOPCode, Int, Int, Int, Int, Int)

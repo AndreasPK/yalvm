@@ -1,4 +1,4 @@
-module LRT(setGlobal, lrtPrint, registerAll, registerFunction) where
+module LRT(lrtPrint, registerAll, registerFunction) where
 
 import LuaObjects
 import Parser
@@ -9,19 +9,14 @@ import Control.Monad.ST as ST
 import qualified Data.Foldable as Foldable
 import Debug.Trace
 
---add global values, names are to be given without trailing zero
-setGlobal :: LuaState -> String -> LuaObject -> LuaState
-setGlobal (LuaState exec globals) key value =
-  let name = key ++ "\NUL"
-  in
-  LuaState exec $ Map.insert name value globals
+
+registerFunction :: LuaState -> (LVStack -> IO LVStack) -> String -> IO ()
+registerFunction state f name =
+  writeGlobal (stateGlobals state) (name ++ "\NUL") $ LOFunction $ HaskellFunctionInstance name f
+  --setGlobal state name $ LOFunction $ HaskellFunctionInstance name f
 
 
-registerFunction :: LuaState -> (LVStack -> IO LVStack) -> String -> LuaState
-registerFunction state f name = setGlobal state name $ LOFunction $ HaskellFunctionInstance name f
-
-
-registerAll :: LuaState -> LuaState
+registerAll :: LuaState -> IO ()
 registerAll s = registerFunction s definePrint "print"
 
 

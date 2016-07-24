@@ -22,7 +22,7 @@ import Parser as P
 import Debug.Trace
 import Control.Exception.Base
 
-data LuaObject = LONil | LONumber { lvNumber :: {-# UNPACK #-} !Double} | LOString { loString :: !String} | LOTable !(IORef LTable) |
+data LuaObject = LONil | LONumber { lvNumber :: {-# UNPACK #-} !Double} | LOString { loString :: !String} | LOTable {-# UNPACK #-} !(IORef LTable) |
   LOFunction { loFunction :: !LuaFunctionInstance} | LOBool !Bool | LOUserData {-TODO-} | LOThread {-TODO-}
   deriving (Eq, Show, Ord)
 
@@ -53,7 +53,7 @@ writeLR = writeIORef
 
 getConst :: LuaConstList -> Int -> LuaObject
 getConst (LuaConstList size constants) pos =
-  let constant = constants !! fromIntegral pos
+  let constant = constants V.! pos
   in
     luaConstToObject constant
 
@@ -132,10 +132,10 @@ lgetFunctionHeader = funcHeader . loFunction
 
 --functionInstance -> FunctionIndex -> FunctionHeader
 lgetPrototype :: LuaObject -> Int -> LuaFunctionHeader
-lgetPrototype (LOFunction func@(LuaFunctionInstance stack instructions constList functionHeader varargs upvalues _ )) =
+lgetPrototype =
   --let LuaFunctionHeader name startLine endLine upvalueCount parameterCount varargFlag stackSize instructions constList functionList instPosList localList upvalueList = functionHeader
   --in
-  ((!!) . P.fhFunctions . funcHeader) func
+  (!!) . P.fhFunctions . funcHeader . loFunction
   --functionList !! pos
 
 -- | Create a function instance based on prototype, doesn't set up passed parameters/upvalues/varargs
@@ -147,12 +147,10 @@ linstantiateFunction functionHeader@(LuaFunctionHeader name startLine endLine up
       (\stack ->
         LuaFunctionInstance
           stack
-          ( (\(LuaInstructionList l ins) -> V.fromListN (fromIntegral l) ins) instructions)
+          (lilInstructions instructions)
           constList
           functionHeader
           V.empty
-          (LuaRTUpvalueList IntMap.empty)
-          undefined --closure
       ) $ createStack $ fromIntegral stackSize
     return $ LOFunction functionInstance
 
@@ -272,8 +270,8 @@ instance Show (IO LVStack) where
 newtype LuaMap = LuaMap (Map.Map Int LuaObject) deriving (Eq, Show, Ord)
 
 instance LuaStack LuaMap where
-  setElement m pos obj = undefined -- do let LuaMap stack = m; return . LuaMap $ Map.insert pos obj stack --m --LuaMap $ Map.insert pos obj stack
-  getElement m pos = undefined --do LuaMap stack <- m; return $ fromMaybe LONil $ Map.lookup pos stack
+  setElement m pos obj = error "LuaMap undefined" -- do let LuaMap stack = m; return . LuaMap $ Map.insert pos obj stack --m --LuaMap $ Map.insert pos obj stack
+  getElement m pos = error "LuaMap undefined" --do LuaMap stack <- m; return $ fromMaybe LONil $ Map.lookup pos stack
   createStack size = return $ LuaMap $ Map.fromAscList $ zip [0..size-1] $ repeat LONil
   stackSize m = let (LuaMap stack) = m in return $ Map.size stack
   getRange stack lb rb = mapM (getElement stack :: Int -> IO LuaObject) [lb .. rb]
@@ -289,28 +287,6 @@ instance LuaStack LuaMap where
     return $ LuaMap $ Map.union stack $
       Map.fromAscList $ zip [size..] objects
 
--- | the runtime value of a upvalue
-data LuaRuntimUpvalue =
-  LRTUpvalueReference LuaMap Int | --Reference a stack and a index
-  LRTUpvalueValue LuaObject | --Reference a object directly
-  LRTUpvalueUpvalue LuaRTUpvalueList Int | --References the upvalue of another function
-  LRTOpenUpvalue Int Bool --position type(Stackvalue=True/Upvalue)
-  deriving (Eq, Show, Ord)
-
--- | List of upvalues used in this function
-data LuaRTUpvalueList = LuaRTUpvalueList
-  (IntMap.IntMap LuaRuntimUpvalue)
-  deriving (Eq, Show, Ord)
-
-
-data LuaClosure = LuaClosure {
-  closureRefs :: ![ClosureRef]
-  } deriving (Eq, Show)
-
---A closure reference can point to the stack of the function or the closure itself
-data ClosureRef = StackRef !Int | ClosedRef !LuaObject deriving (Eq, Show)
-
-
 
 type LuaParameterList = [LuaObject]
 
@@ -320,12 +296,10 @@ type LuaParameterList = [LuaObject]
 data LuaFunctionInstance =
   LuaFunctionInstance
   { funcStack :: !LVStack -- Stack
-  , funcInstructions :: !(V.Vector LuaInstruction) --List of op codes
+  , funcInstructions :: !(UV.Vector LuaInstruction) --List of op codes
   , funcConstants :: !LuaConstList --List of constants
   , funcHeader :: !LuaFunctionHeader --Function prototypes
   , funcVarargs :: !(V.Vector LuaObject) --ArgumentList for varargs, starting with index 0
-  , funcUpvalues :: !LuaRTUpvalueList --Upvalues missing
-  , funcClosure :: LuaClosure --ToDo
   }
   |
   HaskellFunctionInstance
@@ -347,7 +321,7 @@ instance Show (IO LuaMap) where
 
 instance Show LuaFunctionInstance where
   show (HaskellFunctionInstance name _) = "(HaskellFunction: " ++ name ++ ")"
-  show (LuaFunctionInstance stack _ constList fh varargs upvalues _) = "(Lua Function: " ++ show (stack, constList, fh, varargs, upvalues) ++ ")"
+  show (LuaFunctionInstance stack _ constList fh varargs ) = "(Lua Function: " ++ show (stack, constList, fh, varargs) ++ ")"
 
 -- | Get line at which instruction was defined
 -- function pc -> line
@@ -362,13 +336,16 @@ data LuaExecutionState = LuaStateSuspended | LuaStateRunning | LuaStateDead deri
 data LuaExecutionThread =
   LuaExecutionThread {
     execFunctionInstance :: !LuaFunctionInstance,
-    execPrevInst :: !LuaExecutionThread,
+    execPrevInst :: LuaExecutionThread,
     execCurrentPC :: !Int,
     execRunningState :: !LuaExecutionState,
-    execCallInfo :: !LuaCallInfo }
-  |
-  LuaExecInstanceTop { execResults :: [LuaObject] }
-  deriving (Eq, Show, Ord)
+    execCallInfo :: !LuaCallInfo,
+    execStop :: {-# UNPACK #-} !Int }
+  deriving (Eq, Ord)
+
+instance Show LuaExecutionThread where
+  show x = if execStop x == 0 then "(LuaExecutionThread (" ++ show (execFunctionInstance x, execCurrentPC x, execRunningState x, execCallInfo x, execStop x) ++ "))"
+    else "(LuaExecutionThread_Top " ++ (show . execFunctionInstance) x ++ ")"
 
 -- | Contains information about arguments passed to the function
 data LuaCallInfo = LuaCallInfo
@@ -381,5 +358,5 @@ callInfo = LuaCallInfo
 callInfoEmpty = LuaCallInfo []
 
 getContainedFunctionHeader :: LuaExecutionThread -> Int -> LuaFunctionHeader
-getContainedFunctionHeader (LuaExecutionThread func _ _ _ _)  =
-  getIndexedFunction $ funcHeader func
+getContainedFunctionHeader  =
+  getIndexedFunction . funcHeader . execFunctionInstance
