@@ -153,7 +153,7 @@ execOP state = do
 --  putStrLn "\n"
   --ss <- stackSize stack
   --putStr $ "StackSize:" ++ show ss ++ " - "
-  --putStrLn $ show (getPC state + 1) ++ ":" ++ ppLuaInstruction instruction
+  --putStrLn $ show (getPC state + 1) ++ ":" ++ ppLuaInstruction nextInstruction
 
   case opCode of
     MOVE -> do -- RA = RB
@@ -198,8 +198,9 @@ execOP state = do
       LOTable table <- getElement stack rb :: IO LuaObject
       table <- readIORef table
       let value = getTableElement table index
-      traceShow(table, value, index) $
-        fmap incPC $ updateStack state $ \s -> setElement s ra value
+      --traceShow(table, value, index) $
+      modifyStack state $ \s -> setElement s ra value
+      return $ incPC state
     SETTABLE -> do
       value <- decodeConst rc :: IO LuaObject
       LOTable table <- getElement stack ra
@@ -436,7 +437,7 @@ runHaskellCall state = do
   --Get function arguments
   (callee, parameters) <- getCallArguments =<< state :: IO (LuaObject, [LuaObject])
   let func = funcFunc . loFunction $ callee :: LVStack -> IO LVStack
-  --traceM $ show (loFunction callee, parameters)
+  --traceM $ "runHaskellCall:" ++ show (loFunction callee, parameters)
   --Call haskell function with arguments, transform results back to State
   results <- func =<< (fromList parameters :: IO LVStack)
 
@@ -548,6 +549,7 @@ returnByOrigin state exec calleeResults = do
   --traceIO $ show resultCount ++ "=RB"
   let results = if resultCount == 0 then calleeResults else take (resultCount - 1) $ calleeResults ++ repeat LONil
   let stackOffset = LVM.ra returnInstruction
+  --traceM $ show calleeResults
 
   --Update the previous stack frame, remove parameters not requrested
   prevFrame <- lGetLastFrame <$> state

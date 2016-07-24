@@ -29,7 +29,7 @@ definePrint :: (LuaStack stack) => stack -> IO LVStack
 definePrint arguments = do
   al <- toList arguments :: IO [LuaObject]
   --print al
-  Foldable.traverse_ (putStrLn . loString . ltoString) al
+  putStrLn $ loString . ltoString $ head al --Foldable.traverse_ (putStrLn . loString . ltoString) al
   createStack 1
 
 lrtPrint = HaskellFunctionInstance "print" definePrint
