@@ -88,8 +88,8 @@ createTable = LTable Map.empty :: LTable
 
 ppLuaInstruction :: LuaInstruction -> String
 ppLuaInstruction inst =
-  let attributes = show (op inst) : map show [ ra inst :: Int, rb inst, rc inst, rsbx inst, rbx inst] :: [String]
-      namedAtt = flip zip attributes $ fmap (++":") ["op", "ra", "rb", "rc", "rsbx", "rbx"] :: [(String, String)]
+  let attributes = show (op inst) : map show [ ra inst :: Int, rb inst, rc inst, rsbx inst, rsbx inst + 131070, rbx inst] :: [String]
+      namedAtt = flip zip attributes $ fmap (++":") ["op", "ra", "rb", "rc", "rsbx", "csbx" , "rbx"] :: [(String, String)]
   in
   foldl (\a b -> a ++ " " ++ uncurry (++) b) "" namedAtt
 

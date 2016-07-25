@@ -1,4 +1,5 @@
 {-# LANGUAGE TypeSynonymInstances #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE BangPatterns #-}
 
 
@@ -39,14 +40,18 @@ data LuaState = LuaState {
   deriving (Eq)
 
 instance Show LuaState where
-  show state = show (stateExecutionThread state) ++
-    show (unsafePerformIO $ readIORef $ stateGlobals state)
+  show state = "(LuaState " ++ show (stateExecutionThread state) ++
+    show (unsafePerformIO $ readIORef $ stateGlobals state) ++
+      ")"
+
+instance Show LuaGlobals where
+  show x = "Globals: " ++ unsafePerformIO ( show <$> readIORef x)
 
 --Take the function header of a top level function and create a vm state based on that
 startExecution :: Parser.LuaFunctionHeader -> IO LuaState
 startExecution header = do
   function@(LOFunction funcInstance) <- linstantiateFunction header :: IO LuaObject
-  let exec = LuaExecutionThread funcInstance (error "Can't execute past top of call stack") 1 LuaStateRunning callInfoEmpty 1
+  let exec = LuaExecutionThread funcInstance (error "Can't execute past top of call stack") 0 LuaStateRunning callInfoEmpty 1
   LuaState exec <$> newIORef Map.empty
 
 lGetResults :: LuaState -> LVStack
@@ -173,11 +178,7 @@ execOP state = do
     MOVE -> do -- RA = RB
       obj <- getElement stack rb
       modifyStack stack $ \s -> setElement s ra obj
-      execOP $ incPC state -- <$> updateStack state (\s -> setElement s ra obj)
-
-      --broken for unknown reasons
-      --modifyStack state (\s -> setElement s ra obj)
-      --return $ incPC state
+      execOP $ incPC state
     LOADNIL -> -- S[RA..RB] = nil
       incPC <$> updateStack state (\s -> setRange s ra $ LONil:Prelude.replicate (rb - ra) LONil)
       --return $ incPC $ updateStack state (\(LuaMap m) -> LuaMap $ foldl (\m k -> Map.insert k LONil m) stackMap [ra..rb])
@@ -192,23 +193,22 @@ execOP state = do
     GETGLOBAL -> do -- R(A) := Glb(Kst(rbx))
       let key = loString $ getConst constList rbx :: String
       value <- readGlobal globals key
+      --print key
       modifyStack stack (\stack -> setElement stack ra value)
       execOP $ incPC state
     SETGLOBAL -> do
       let s = loString $ getConst constList rbx :: String
       value <- getElement stack ra
       writeGlobal globals s value
+      --print globals
       --traceM $ "set" ++  show (s, value)
       execOP $ incPC state
     GETUPVAL ->
-      let value = error "Get upvalue" -- getUpvalue upvalues rb :: LuaObject
+      let value = error "Get upvalue not yet supported" -- getUpvalue upvalues rb :: LuaObject
       in
       incPC <$> updateStack state (\s -> setElement s ra value)
     SETUPVAL ->
-      --let value = getElement stack ra
-      --    newUpvalues = error "Set upvalue" -- setUpvalue upvalues rb value
-      --in
-      error "Set upvalue"
+      error "Set upvalue not yet supported"
     GETTABLE -> do
       index <- decodeConst rc :: IO LuaObject
       LOTable table <- getElement stack rb :: IO LuaObject
@@ -354,9 +354,8 @@ execOP state = do
       writeIORef table newTable
       return $ incPC state
     CALL -> runCall state
-    TAILCALL -> tailCall $ return state
+    TAILCALL -> tailCall state
     RETURN -> returnCall state
-
     _ -> error "Unknown OP-Code"
 
 
@@ -546,8 +545,8 @@ returnCall state = do
 returnByOrigin :: LuaState -> [LuaObject] -> IO LuaState
 --When returning to Haskell we only pass back the list of results
 returnByOrigin state results =
+  traceShow ("returnByOrigin" ++ show state) $
   if (execStop . stateExecutionThread) state == 1 then do
-    Trace.traceM "Returning to Haskell"
     r <- fromList results :: IO LVStack
     updateStack state $ const $ return r
     return $ setStateDead state
@@ -603,28 +602,26 @@ returnFromLua state calleeResults = do
 
 -- pc points to the tailcall function
 -- replace current execution Thread by one execution the callee
-tailCall :: IO LuaState -> IO LuaState
+tailCall :: LuaState -> IO LuaState
 tailCall state = do
-  (callee@(LOFunction calledFunction), parameters) <- Monad.join $ fmap getCallArguments state :: IO (LuaObject, [LuaObject])
+  (callee@(LOFunction calledFunction), parameters) <- getCallArguments state :: IO (LuaObject, [LuaObject])
   --If we have a tailcall to a non lua function something REALLY went wrong, so guarantee this with an assert
-
-  x <- isLuaCall =<< state :: IO Bool
+  x <- isLuaCall state :: IO Bool
   return $ assert x ()
 
-  let lof@(LOFunction calledFunction) = callee
-
-  let newStackSize = lgetMaxStackSize lof :: Int
+  let newStackSize = lgetMaxStackSize callee :: Int
 
   --collect  parameters
-  let maxArgCount = lgetArgCount lof :: Int
+  let maxArgCount = lgetArgCount callee :: Int
   let (fixedArgs, varArgs) = splitAt maxArgCount parameters
-  newStack <- createStack $ lgetMaxStackSize lof
+  newStack <- createStack $ lgetMaxStackSize callee
   newStack <- setRange newStack 0 fixedArgs
   --newStack <- fromList fixedArgs :: IO LVStack --Monad.join $ flip setStackSize newStackSize $ flip pushObjects fixedArgs $ createStack 0 :: IO LuaMap
 
-  prevExecInst <- fmap lGetLastFrame state
-  globals <- fmap lGetGlobals state
-  let newState = LuaState (LuaExecutionThread calledFunction prevExecInst 0 LuaStateRunning (LuaCallInfo varArgs) 0) globals
+  let isTop = execStop . stateExecutionThread $ state
+  let prevExecInst = if 1 == isTop then error "Can't execute past top of callstack" else lGetLastFrame state
+  let globals = lGetGlobals state
+  let newState = LuaState (LuaExecutionThread calledFunction prevExecInst 0 LuaStateRunning (LuaCallInfo varArgs) isTop) globals
 
   --updateStack fails here?!?
   updateStack newState $ return . const newStack
