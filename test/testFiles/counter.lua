@@ -1,9 +1,11 @@
 local x = 0
-for j = 1, 7 do
+z = 0
+for j = 1, 15 do
   local x = 0
-  for i = 1, 2100000 do
+  for i = 1, 5000000 do
     x = x + i
   end
   local y = x
-  --print(y)
+  z = y
 end
+print(z)

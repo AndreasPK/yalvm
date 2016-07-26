@@ -18,8 +18,11 @@ flags: {}
 extra-package-dbs: []
 
 build:
-  library-profiling: true
-  executable-profiling: true
+#  library-profiling: true
+#  executable-profiling: true
+
+ghc-options:
+  "*": -O -O1
 # Control whether we use the GHC we find on the path
 # system-ghc: true
 

@@ -7,16 +7,12 @@ function fac(x)
   end
 end
 
-local i = 5
-for j=1,500000 do
-  for i=1,40 do
-    if j == 5000 then
-      print(fac(i))
-    end
-  end
-end
+--local i = 5
+--for j=1,10 do
+--      print(fac(j))
+--end
 
-local x = 2
+--local x = 2
 
---returns 120
+--return 120
 return fac(5)

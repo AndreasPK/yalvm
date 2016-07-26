@@ -28,7 +28,18 @@ import qualified Data.Vector.Mutable as MV
 import qualified Data.Vector as V
 import qualified Data.IntMap.Strict as IntMap
 import System.IO.Unsafe
+import qualified Data.ByteString as BS
+import LRT
 
+registerFunction :: LuaState -> LuaFunctionInstance -> IO ()
+registerFunction state f =
+  let name = funcName f in
+    writeGlobal (stateGlobals state) (name ++ "\NUL") $ LOFunction f {funcName = name ++ "\NUL"}
+  --setGlobal state name $ LOFunction $ HaskellFunctionInstance name f
+
+
+registerAll :: LuaState -> IO ()
+registerAll s = registerFunction s LRT.lrtPrint
 
 type LuaGlobals = IORef (Map.Map String LuaObject)
 
@@ -53,6 +64,19 @@ startExecution header = do
   function@(LOFunction funcInstance) <- linstantiateFunction header :: IO LuaObject
   let exec = LuaExecutionThread funcInstance (error "Can't execute past top of call stack") 0 LuaStateRunning callInfoEmpty 1
   LuaState exec <$> newIORef Map.empty
+
+runLuaCode :: FilePath -> IO LVM.LuaState
+runLuaCode path = do
+  --traceM "runLuaCode"
+  fileContent <- BS.readFile path :: IO BS.ByteString
+  --traceM "fr"
+  let chunk = either (error "Failed to parse binary file") id $ LuaLoader.loadLua fileContent -- :: IO (Either String Parser.LuaBinaryFile)
+  vm <- LVM.startExecution $ Parser.getTopFunction chunk :: IO LVM.LuaState
+  --traceM "vc"
+  registerAll vm
+  --traceM "Run chunk"
+  LVM.runLuaFunction vm
+  --traceM "ranLuaCode"
 
 lGetResults :: LuaState -> LVStack
 lGetResults = lGetStateStack --fromList . execResults . stateExecutionThread
@@ -152,15 +176,15 @@ execOP state = do
   --let  LuaFunctionInstance stack instructions constList funcPrototype varargs upvalues _ = functionInst
   --traceM $ show (instructions, pc)
 
-  let  nextInstruction = getInstruction state --instructions V.! getPC state
-       opCode = LuaLoader.op nextInstruction :: LuaOPCode
-       ra = LuaLoader.ra $! nextInstruction :: Int
-       rb = LuaLoader.rb nextInstruction :: Int
-       rc = LuaLoader.rc nextInstruction
-       rbx = LuaLoader.rbx nextInstruction :: Int
-       rsbx = LuaLoader.rsbx nextInstruction :: Int
+  let  nextInstruction = {-# SCC "decode" #-} getInstruction state --instructions V.! getPC state
+       opCode = {-# SCC "decode" #-} seq nextInstruction $ LuaLoader.op nextInstruction :: LuaOPCode
+       ra = {-# SCC "decode" #-} LuaLoader.ra $! nextInstruction :: Int
+       rb = {-# SCC "decode" #-} LuaLoader.rb nextInstruction :: Int
+       rc = {-# SCC "decode" #-} LuaLoader.rc nextInstruction
+       rbx = {-# SCC "decode" #-} LuaLoader.rbx nextInstruction :: Int
+       rsbx = {-# SCC "decode" #-} LuaLoader.rsbx nextInstruction :: Int
        stack = lGetStateStack state
-       constList = Parser.fhConstants . funcHeader . execFunctionInstance . stateExecutionThread $ state
+       constList = {-# SCC "decode" #-} Parser.fhConstants . funcHeader . execFunctionInstance . stateExecutionThread $ state
        globals = lGetGlobals state :: IORef (Map.Map String LuaObject)
 
        --For K enccoding bit 9 deternines if we use a constant or a stack value
@@ -174,7 +198,7 @@ execOP state = do
   --putStr $ "StackSize:" ++ show ss ++ " - "
   --putStrLn $ show (getPC state + 1) ++ ":" ++ ppLuaInstruction nextInstruction
 
-  case opCode of
+  {-# SCC "switchOP" #-} case opCode of
     MOVE -> do -- RA = RB
       obj <- getElement stack rb
       modifyStack stack $ \s -> setElement s ra obj
@@ -317,13 +341,14 @@ execOP state = do
       modifyStack stack $ \stack -> setElement stack ra index
       execOP $ setPC state $ newPC + 1
     FORLOOP -> {-# SCC "forCost" #-} do
-    {- R(A) += R(A+2)
+      {- R(A) += R(A+2)
       if R(A) <?= R(A+1) then {
       PC += sBx; R(A+3) = R(A)
       } -}
-      stepping <- getElement stack $! ra + 2
-      index <- seq stepping $ ladd stepping <$> getElement stack ra
-      limit <- seq index $ getElement stack $ ra + 1
+
+      stepping <- getElement stack $! seq ra $ ra + 2
+      index <- ladd stepping <$> getElement stack ra
+      limit <- getElement stack $! ra + 1
 
       let comparison = if lvNumber stepping >= 0 then (<=) else (>=) :: Double -> Double -> Bool --Check depends on sign of stepping
           check = Data.Function.on comparison lvNumber -- (\a b -> comparison (lvNumber a) (lvNumber b))
@@ -331,10 +356,10 @@ execOP state = do
       setElement stack ra index --update index variable
 
       let withinLimit = check index limit --False when out of bounds
-      seq withinLimit $ execOP =<< incPC <$> if withinLimit
+      execOP =<< {-# SCC "forCost2" #-} incPC <$> if withinLimit
         then do
           setElement stack (ra+3) index
-          return $ setPC state $! rsbx + getPC state
+          return $ setPC state $ rsbx + getPC state
         else return state
 
     TFORLOOP ->
@@ -545,7 +570,7 @@ returnCall state = do
 returnByOrigin :: LuaState -> [LuaObject] -> IO LuaState
 --When returning to Haskell we only pass back the list of results
 returnByOrigin state results =
-  traceShow ("returnByOrigin" ++ show state) $
+  --traceShow ("returnByOrigin" ++ show state) $
   if (execStop . stateExecutionThread) state == 1 then do
     r <- fromList results :: IO LVStack
     updateStack state $ const $ return r

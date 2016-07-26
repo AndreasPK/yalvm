@@ -20,21 +20,8 @@ import Control.Monad.ST
 import System.Environment as Sys
 
 
-runLuaCode :: FilePath -> IO LVM.LuaState
-runLuaCode path = do
-  --traceM "runLuaCode"
-  fileContent <- BS.readFile path :: IO BS.ByteString
-  --traceM "fr"
-  let chunk = either (error "Failed to parse binary file") id $ LuaLoader.loadLua fileContent -- :: IO (Either String Parser.LuaBinaryFile)
-  vm <- LVM.startExecution $ Parser.getTopFunction chunk :: IO LVM.LuaState
-  --traceM "vc"
-  LRT.registerAll vm
-  --traceM "Run chunk"
-  LVM.runLuaFunction vm
-  --traceM "ranLuaCode"
-
 testFile :: FilePath -> IO LVM.LuaState
-testFile p = runLuaCode $ "D:\\Uni\\00_SS2016\\90_AbsMachine\\yalvm\\test\\testFiles\\" ++ p
+testFile p = LVM.runLuaCode $ "D:\\Uni\\00_SS2016\\90_AbsMachine\\yalvm\\test\\testFiles\\" ++ p
 
 
 file :: IO ByteString
@@ -51,7 +38,7 @@ main :: IO ()
 main = do
   path <- Prelude.head <$> getArgs :: IO String
   print $ "Running " ++ path
-  runLuaCode path
+  LVM.runLuaCode path
   return ()
 
   {-file <- BS.readFile path
