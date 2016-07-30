@@ -125,7 +125,7 @@ getInstruction :: LuaState -> LuaInstruction
 getInstruction state  = --(LuaState (LuaExecutionThread (LuaFunctionInstance _ instructions _ _ _ _) _ pc _ _) _) =
   let !exec = stateExecutionThread state
   in
-  (funcInstructions . execFunctionInstance) exec UV.! execCurrentPC exec
+  (funcInstructions . execFunctionInstance) exec `UV.unsafeIndex`{-(!)-} execCurrentPC exec
   -- instructions !! pc
 
 --get the instruction at pc + offset
@@ -176,16 +176,21 @@ execOP state = do
   --let  LuaFunctionInstance stack instructions constList funcPrototype varargs upvalues _ = functionInst
   --traceM $ show (instructions, pc)
 
-  let  nextInstruction = {-# SCC "decode" #-} getInstruction state --instructions V.! getPC state
-       opCode = {-# SCC "decode" #-} seq nextInstruction $ LuaLoader.op nextInstruction :: LuaOPCode
-       ra = {-# SCC "decode" #-} LuaLoader.ra $! nextInstruction :: Int
-       rb = {-# SCC "decode" #-} LuaLoader.rb nextInstruction :: Int
-       rc = {-# SCC "decode" #-} LuaLoader.rc nextInstruction
-       rbx = {-# SCC "decode" #-} LuaLoader.rbx nextInstruction :: Int
-       rsbx = {-# SCC "decode" #-} LuaLoader.rsbx nextInstruction :: Int
-       stack = lGetStateStack state
-       constList = {-# SCC "decode" #-} Parser.fhConstants . funcHeader . execFunctionInstance . stateExecutionThread $ state
-       globals = lGetGlobals state :: IORef (Map.Map String LuaObject)
+  let exec = {-# SCC "getExec" #-} stateExecutionThread state
+      func = {-# SCC "getFunc" #-} seq exec $ execFunctionInstance exec
+      pc = execCurrentPC exec
+      instructions = seq func $ funcInstructions func
+      nextInstruction = UV.unsafeIndex instructions pc
+      --nextInstruction = {-# SCC "decode" #-} getInstruction state --instructions V.! getPC state
+      opCode = {-# SCC "decode" #-} seq nextInstruction $ LuaLoader.op nextInstruction :: LuaOPCode
+      ra = {-# SCC "decode" #-} LuaLoader.ra $! nextInstruction :: Int
+      rb = {-# SCC "decode" #-} LuaLoader.rb nextInstruction :: Int
+      rc = {-# SCC "decode" #-} LuaLoader.rc nextInstruction
+      rbx = {-# SCC "decode" #-} LuaLoader.rbx nextInstruction :: Int
+      rsbx = {-# SCC "decode" #-} LuaLoader.rsbx nextInstruction :: Int
+      stack = funcStack func -- lGetStateStack state
+      constList = {-# SCC "decode" #-} Parser.fhConstants . funcHeader $ func -- . execFunctionInstance . stateExecutionThread $ state
+      globals = lGetGlobals state :: IORef (Map.Map String LuaObject)
 
        --For K enccoding bit 9 deternines if we use a constant or a stack value
   let  decodeConst :: Int -> IO LuaObject
