@@ -1,4 +1,6 @@
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE LiberalTypeSynonyms #-}
+
 
 module LuaObjects(module LuaObjects) where
 
@@ -224,68 +226,56 @@ class LuaStack l where
   toList l = do count <- stackSize l; mapM (getElement l) [0..count -1]
   setRange stack n objects = foldM (\s (k, v) -> setElement s k v) stack $ zip [n..] objects --requires stack to be at least (n - 1) in size
 
-type LVStack = MV.IOVector LuaObject
+type LVStack = IORef (MV.IOVector LuaObject)
 
 instance Show LVStack where
   show x = "LVStack (Show Not implemented)" --unsafePerformIO $ do ss <- stackSize x; show <$> mapM  (getElement x) [0 .. ss] --"LVStack [not implemented]"
 
 instance LuaStack LVStack where
-  createStack size = MV.replicate size LONil
-  setElement stack i v = do MV.write stack i v; return stack
-  getElement = MV.read
-  getRange stack from to = mapM (MV.read stack) [from..to]
-  setRange stack start objects = do zipWithM_ (MV.write stack) [start..] objects; return stack
-  stackSize = return . MV.length
-  setStackSize stack size =
+  createStack size = newIORef =<< MV.replicate size LONil
+  setElement stack i v = do
+    s <- readIORef stack :: IO (MV.IOVector LuaObject)
+    MV.unsafeWrite s i v
+    return stack
+  getElement s i = readIORef s >>= flip MV.unsafeRead i
+  getRange s from to = do stack <- readIORef s; mapM (MV.read stack) [from..to]
+  setRange s start objects = do stack <- readIORef s; zipWithM_ (MV.write stack) [start..] objects; return s
+  stackSize s = MV.length <$> readIORef s :: IO Int
+  setStackSize sref size = do
+    stack <- readIORef sref;
     case compare (MV.length stack) size of
-      Prelude.EQ -> return stack
+      Prelude.EQ -> return sref
       Prelude.LT -> do
         let ss = MV.length stack
-        MV.grow stack $ size - ss
-      Prelude.GT -> return $ MV.slice 0 (size-1) stack
+        writeIORef sref =<< MV.grow stack (size - ss)
+        return sref;
+      Prelude.GT -> do
+        writeIORef sref $ MV.slice 0 (size-1) stack
+        return sref
   --grows stack accordingly
-  pushObjects stack objects = do
+  pushObjects sref objects = do
     --grow the vector by the number of elements, then put them into the vector
     let l = length objects
     --s <- stack :: IO LVStack
-    ss <- stackSize stack
-    ns <- MV.grow stack l
-    setRange ns ss objects
+    stack <- readIORef sref
+    let ss = MV.length stack
+
+    writeIORef sref =<< MV.grow stack l
+    setRange sref ss objects
   fromList objects = do
-    stack <- MV.new $ length objects
+    stack <- createStack $ length objects
     setRange stack 0 objects
-  shrink stack by = do
-    --s <- stack
+  shrink sref by = do
+    stack <- readIORef sref
     let newSize = MV.length stack - by
-    return $! MV.slice 0 newSize stack
-  toList stack =
-    --s <- stack
+    writeIORef sref $ MV.slice 0 newSize stack
+    return sref
+  toList sref = do
+    stack <- readIORef sref
     mapM (MV.read stack) [0.. MV.length stack -1]
 
 instance Show (IO LVStack) where
   show s = unsafePerformIO $ do s <- s; return $ show s
-
-
--- | Maps indexes to a lua object
-newtype LuaMap = LuaMap (Map.Map Int LuaObject) deriving (Eq, Show, Ord)
-
-instance LuaStack LuaMap where
-  setElement m pos obj = error "LuaMap undefined" -- do let LuaMap stack = m; return . LuaMap $ Map.insert pos obj stack --m --LuaMap $ Map.insert pos obj stack
-  getElement m pos = error "LuaMap undefined" --do LuaMap stack <- m; return $ fromMaybe LONil $ Map.lookup pos stack
-  createStack size = return $ LuaMap $ Map.fromAscList $ zip [0..size-1] $ repeat LONil
-  stackSize m = let (LuaMap stack) = m in return $ Map.size stack
-  getRange stack lb rb = mapM (getElement stack :: Int -> IO LuaObject) [lb .. rb]
-  setStackSize m size = do
-    let LuaMap stack = m
-    case compare (Map.size stack) size of
-      Prelude.EQ -> return m
-      GT -> return $ LuaMap $ fst $ Map.split size stack
-      Prelude.LT -> return $ LuaMap $ Map.union stack $ Map.fromAscList $ zip [Map.size stack .. (size-1)] $ repeat LONil
-  pushObjects m objects = do
-    let LuaMap stack = m
-    let size = Map.size stack
-    return $ LuaMap $ Map.union stack $
-      Map.fromAscList $ zip [size..] objects
 
 
 type LuaParameterList = [LuaObject]
@@ -313,11 +303,6 @@ instance Eq LuaFunctionInstance where
 
 instance Ord LuaFunctionInstance where
   (<=) a b = error "Broken typeclass for function instances"
-
-instance Show (IO LuaMap) where
-  show m = unsafePerformIO $ do
-    m <- m
-    return $ show m
 
 instance Show LuaFunctionInstance where
   show (HaskellFunctionInstance name _) = "(HaskellFunction: " ++ name ++ ")"
