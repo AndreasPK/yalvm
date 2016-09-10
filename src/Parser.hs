@@ -82,7 +82,7 @@ data LuaFunctionHeader = LuaFunctionHeader
   {  fhName :: LuaString -- name
   ,  fhStart :: Word32 --line defined
   ,  fhEnd :: Word32 --line end
-  ,  fhUpvalueCount ::Word8 --upvalueCount
+  ,  fhUpvalueCount :: Word8 --upvalueCount
   ,  fhParameterCount :: Word8 --parameterCount
   ,  fhVarargFlag :: Word8 --varargFlag
   ,  fhMaxStacksize :: Word8 --maxStackSize

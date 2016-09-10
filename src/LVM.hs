@@ -84,7 +84,7 @@ lGetResults = lGetStateStack --fromList . execResults . stateExecutionThread
 --only valid while lua function is being executed
 lGetStateStack :: LuaState -> LVStack
 lGetStateStack =
-  funcStack . execFunctionInstance . stateExecutionThread
+  uvStack . funcUpvalues . execFunctionInstance . stateExecutionThread
 
 lGetLastFrame :: LuaState -> LuaExecutionThread
 lGetLastFrame = execPrevInst . stateExecutionThread
@@ -111,8 +111,9 @@ updateStack :: LuaState -> (LVStack -> IO LVStack) -> IO LuaState
 updateStack state f = do
   let exec = stateExecutionThread state
       func = execFunctionInstance exec
-  stack <-  f $! funcStack func :: IO LVStack
-  return $ state { stateExecutionThread = exec { execFunctionInstance = func { funcStack = stack }}}
+      uv = funcUpvalues func
+  stack <-  f $! uvStack uv :: IO LVStack
+  return $ state { stateExecutionThread = exec { execFunctionInstance = func { funcUpvalues = uv { uvStack = stack } }}}
 
 --When only values on the stack are modified this is a faster alternative then to update the whole state 'stack'
 modifyStack :: LVStack -> (LVStack -> IO LVStack) -> IO ()
@@ -188,7 +189,8 @@ execOP state = do
       rc = {-# SCC "decode" #-} LuaLoader.rc nextInstruction
       rbx = {-# SCC "decode" #-} LuaLoader.rbx nextInstruction :: Int
       rsbx = {-# SCC "decode" #-} LuaLoader.rsbx nextInstruction :: Int
-      stack = funcStack func -- lGetStateStack state
+      uv = funcUpvalues func
+      stack = uvStack uv -- lGetStateStack state
       constList = {-# SCC "decode" #-} Parser.fhConstants . funcHeader $ func -- . execFunctionInstance . stateExecutionThread $ state
       globals = lGetGlobals state :: IORef (Map.Map String LuaObject)
 
@@ -518,7 +520,7 @@ runLuaCall state = do
   calleeStack <- createStack $ fromIntegral $ Parser.fhMaxStacksize calleeHeader :: IO LVStack
   calleeStack <- setRange calleeStack 0 fixedArguments
 
-  callee <- return $ callee { funcStack = calleeStack }
+  callee <- return $ callee { funcUpvalues = FuncUpvalueStack calleeStack [] }
 
   --traceM "calleeStack"
   --mapM_ print =<< toList calleeStack

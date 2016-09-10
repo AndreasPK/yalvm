@@ -7,6 +7,11 @@ import Data.STRef
 import Data.Vector.Mutable as VM
 import LuaObjects
 
+x = return [1, 2, 3, 4] >>=
+  \ a ->
+    return $ 1 : a >>=
+      \ b -> return $ 2 : a >>=
+
 {-
 class LuaStack l where
   createStack :: Int -> l
