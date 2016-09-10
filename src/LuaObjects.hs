@@ -289,6 +289,12 @@ data FuncUpvalueList =
   FuncUpvalueClosed [IORef LuaObject]
   deriving (Eq, Show)-- Stack, list of indixed
 
+data UVRef =
+  UVRef
+  { stack :: LVStack
+  , offset :: !Int
+  }
+
 type LuaFunctionUpvalues = IORef FuncUpvalueList
 
 createUpvalues :: LVStack -> [Int] -> FuncUpvalueList
