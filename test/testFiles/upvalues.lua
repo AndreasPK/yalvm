@@ -8,8 +8,9 @@ function f1(x)
   return f2
 end
 
---local x = f1(1)
+local x = f1(1)
 
---print(x())
+print(x())
+print(x())
 
 return x()

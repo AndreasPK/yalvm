@@ -145,10 +145,11 @@ lgetPrototype =
 linstantiateFunction :: LuaFunctionHeader -> IO LuaObject
 linstantiateFunction functionHeader@(LuaFunctionHeader name startLine endLine upvalueCount
   parameterCount varargFlag stackSize instructions constList functionList
-  instPosList localList upvalueList ) = do
-    stack <- createStack $ fromIntegral stackSize
+  instPosList localList upvalueList) = do
+    stack <- createStack $ fromIntegral stackSize :: IO LVStack
+    upvalues <- newIORef $ FuncUpvalueStack stack []
     let functionInstance = LuaFunctionInstance
-          (FuncUpvalueStack stack [])
+          upvalues
           (lilInstructions instructions)
           constList
           functionHeader
@@ -227,6 +228,12 @@ class LuaStack l where
 
 type LVStack = IORef (MV.IOVector LuaObject)
 
+showLVStack :: LVStack -> IO ()
+showLVStack stack = do
+  size <- stackSize stack
+  let f = getElement stack
+  mapM_ (f >=> print) [0..size - 1]
+
 instance Show LVStack where
   show x = "LVStack (Show Not implemented)" --unsafePerformIO $ do ss <- stackSize x; show <$> mapM  (getElement x) [0 .. ss] --"LVStack [not implemented]"
 
@@ -283,44 +290,61 @@ type LuaParameterList = [LuaObject]
 data FuncUpvalueList =
   FuncUpvalueStack
   { uvStack :: LVStack
-  , uvOffsets :: [Int]
+  , uvUpvalues :: [UVRef]
   }
-  |
-  FuncUpvalueClosed [IORef LuaObject]
   deriving (Eq, Show)-- Stack, list of indixed
 
 data UVRef =
   UVRef
-  { stack :: LVStack
-  , offset :: !Int
+  { uvrStack :: LVStack
+  , uvrOffset :: !Int
   }
+  deriving (Eq, Show)
 
 type LuaFunctionUpvalues = IORef FuncUpvalueList
 
-createUpvalues :: LVStack -> [Int] -> FuncUpvalueList
-createUpvalues =
-  FuncUpvalueStack
+instance Show LuaFunctionUpvalues where
+  show x = unsafePerformIO $ do
+    uv <- readIORef x
+    return $ "(IORef (" ++ show uv ++ ") )"
+
+setUVStack :: LuaFunctionUpvalues -> LVStack -> IO ()
+setUVStack uvr stack = do
+  uv <- readIORef uvr :: IO FuncUpvalueList
+  writeIORef uvr $ uv { uvStack = stack }
+
+getUpvalue :: FuncUpvalueList -> Int -> UVRef
+getUpvalue (FuncUpvalueStack stack upvalues) index =
+  upvalues !! index
 
 readUpvalue :: LuaFunctionUpvalues -> Int -> IO LuaObject
-readUpvalue uvref index = do
-  upvalues <- readIORef uvref
-  case upvalues of
-    FuncUpvalueStack s i -> getElement s $ i !! index
-    FuncUpvalueClosed objs -> readIORef $ objs !! index
+readUpvalue funcUpval index = do
+  uv <- (`getUpvalue` index) <$> readIORef funcUpval :: IO UVRef
+  getElement (uvrStack uv) (uvrOffset uv) :: IO LuaObject
 
-writeUpvalue :: LuaFunctionUpvalues -> Int -> LuaObject -> IO ()
-writeUpvalue uvref index obj = do
+
+setUpvalues :: Traversable t => LuaFunctionUpvalues -> t UVRef -> IO LuaFunctionUpvalues
+setUpvalues uvref upvalues = do
+  modifyIORef' uvref $ \x -> x { uvUpvalues = F.toList upvalues }
+  return uvref
+
+-- | Update the value of the upvalue at the specific index
+writeUpvalue :: LuaFunctionUpvalues -> Int -> LuaObject -> IO LuaFunctionUpvalues
+writeUpvalue uvref index value = do
   upvalues <- readIORef uvref
-  case upvalues of
-    FuncUpvalueStack s i -> do setElement s (i !! index) obj; return ()
-    FuncUpvalueClosed objs -> writeIORef (objs !! index) obj
+  let uv = getUpvalue upvalues index
+  setElement (uvrStack uv :: LVStack) (uvrOffset uv :: Int) (value :: LuaObject)
+  return uvref
+
+
+
 
 
 -- | Instance of an executable function
 -- LuaFunctionInstance stack instructions constants funcPrototypes upvalues arguments
 data LuaFunctionInstance =
   LuaFunctionInstance
-  { funcUpvalues :: FuncUpvalueList
+  { funcUpvalues :: LuaFunctionUpvalues
   , funcInstructions :: !(UV.Vector LuaInstruction) --List of op codes
   , funcConstants :: !LuaConstList --List of constants
   , funcHeader :: !LuaFunctionHeader --Function prototypes
@@ -341,7 +365,7 @@ instance Ord LuaFunctionInstance where
 
 instance Show LuaFunctionInstance where
   show (HaskellFunctionInstance name _) = "(HaskellFunction: " ++ name ++ ")"
-  show (LuaFunctionInstance stack _ constList fh varargs ) = "(Lua Function: " ++ show (stack, constList, fh, varargs, "upvalues not shown") ++ ")"
+  show (LuaFunctionInstance upvalues _ constList fh varargs ) = "(Lua Function: " ++ show ( uvStack (unsafePerformIO $ readIORef upvalues) , constList, fh, varargs, "upvalues not shown") ++ ")"
 
 -- | Get line at which instruction was defined
 -- function pc -> line
@@ -360,7 +384,7 @@ data LuaExecutionThread =
     execCurrentPC :: !Int,
     execRunningState :: !LuaExecutionState,
     execCallInfo :: !LuaCallInfo,
-    execStop :: {-# UNPACK #-} !Int }
+    execStop :: {-# UNPACK #-} !Int } -- | 1: Stop VM, 0: Continue running
   deriving (Eq, Ord)
 
 instance Show LuaExecutionThread where

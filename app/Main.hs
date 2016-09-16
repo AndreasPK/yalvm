@@ -64,7 +64,7 @@ main = do
 stackWalk :: LVM.LuaState -> IO ()
 stackWalk state =
   Monad.unless (1 == (execStop . LVM.stateExecutionThread) state) $ do
-      let stack = LVM.lGetStateStack state
+      stack <- LVM.lGetStateStack state
       ss <- stackSize stack
       Foldable.traverse_ (fmap print . getElement stack) [0..ss - 1]
       print "1-UP"

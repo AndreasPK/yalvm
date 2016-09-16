@@ -39,7 +39,7 @@ main = do
   True ~=? testStack (fromList [LONumber 1, LONumber 2]) (create (MUL, 0, 0, 0)) (fromList [LONumber 3, LONumber 2])
   ] -}
 
-wrapStackTest :: LuaMap -> LuaInstruction -> LuaState
+wrapStackTest :: (LuaStack l) => l -> LuaInstruction -> LuaState
 wrapStackTest stack instruction =  LuaState (LuaExecutionThread (LuaFunctionInstance stack [instruction] undefined undefined undefined undefined) undefined 0 undefined undefined) undefined
 
 {-testStack :: LuaMap -> LuaInstruction -> LuaMap -> IO Bool
@@ -48,7 +48,7 @@ testStack stack instruction expectedStack =
   in
   fmap (==) (fmap lGetStateStack (execOP $ return state))  expectedStack-}
 
-lcompareResults :: [LuaObject] -> LuaMap -> IO [(Bool, LuaObject, LuaObject)]
+lcompareResults :: [LuaObject] -> LVStack -> IO [(Bool, LuaObject, LuaObject)]
 lcompareResults expected results = do
   let comp = zipWith compareLO expected (toList results)
   print comp
@@ -57,7 +57,7 @@ lcompareResults expected results = do
 testFile :: FilePath -> [LuaObject] -> IO [(Bool, LuaObject, LuaObject)]
 testFile path objs = do
   --traceM "testFile"
-  let vmResult = runLuaCode path
+  let vmResult = LVM.runLuaCode path
   stack <- fmap lGetStateStack vmResult
   lcompareResults objs stack
 
@@ -70,7 +70,7 @@ runLuaCode path = do
   let chunk = either (error "Failed to parse binary file") id $ LuaLoader.loadLua fileContent -- :: IO (Either String Parser.LuaBinaryFile)
   vm <- LVM.startExecution $ Parser.getTopFunction chunk :: IO LuaState
   --traceM "vc"
-  vm <- return $ LRT.registerAll vm
+  vm <- return $ LVM.registerAll vm
   --traceM "Run chunk"
   LVM.runLuaFunction $ return vm
   --traceM "ranLuaCode"
